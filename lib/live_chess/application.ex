@@ -11,6 +11,8 @@ defmodule LiveChess.Application do
       LiveChessWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:live_chess, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: LiveChess.PubSub},
+      {Registry, keys: :unique, name: LiveChess.GameRegistry},
+      LiveChess.GameSupervisor,
       # Start a worker by calling: LiveChess.Worker.start_link(arg)
       # {LiveChess.Worker, arg},
       # Start to serve requests, typically the last entry

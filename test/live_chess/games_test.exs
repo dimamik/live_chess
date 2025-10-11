@@ -1,0 +1,38 @@
+defmodule LiveChess.GamesTest do
+  use ExUnit.Case, async: false
+
+  alias LiveChess.Games
+
+  describe "in-memory game flow" do
+    test "players can create, join, and make moves" do
+      host_token = Games.generate_player_token()
+
+      assert {:ok, room_id} = Games.create_game(host_token)
+      assert {:ok, %{state: state}} = Games.connect(room_id, host_token)
+      assert state.players.white.token == host_token
+      assert state.status == :waiting
+
+      guest_token = Games.generate_player_token()
+      assert {:ok, %{role: :black}} = Games.join_game(room_id, guest_token)
+      assert {:ok, %{state: state_after_join}} = Games.connect(room_id, guest_token)
+      assert state_after_join.status == :active
+
+      assert {:ok, %{state: move_state}} = Games.make_move(room_id, host_token, "e2", "e4")
+      assert move_state.history == ["e2-e4"]
+      assert move_state.turn == :black
+
+      assert {:error, :not_your_turn} = Games.make_move(room_id, host_token, "d2", "d4")
+    end
+
+    test "cannot join when seats taken" do
+      host_token = Games.generate_player_token()
+      {:ok, room_id} = Games.create_game(host_token)
+
+      guest_token = Games.generate_player_token()
+      {:ok, _} = Games.join_game(room_id, guest_token)
+
+      late_token = Games.generate_player_token()
+      assert {:error, :slot_taken} = Games.join_game(room_id, late_token)
+    end
+  end
+end
