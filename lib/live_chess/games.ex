@@ -17,7 +17,7 @@ defmodule LiveChess.Games do
     room_id = unique_room_id()
 
     with {:ok, _pid} <- GameSupervisor.start_game(room_id),
-         {:ok, %{role: :white}} <- GameServer.create(room_id, creator_token) do
+         {:ok, %{role: _role}} <- GameServer.create(room_id, creator_token) do
       {:ok, room_id}
     else
       {:ok, :already_started} -> GameServer.create(room_id, creator_token)

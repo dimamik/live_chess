@@ -66,9 +66,11 @@ defmodule LiveChess.GameServer do
 
   @impl true
   def handle_call({:create, token}, _from, state) do
-    with {:ok, state} <- ensure_slot(state, token, :white) do
+    color = random_color()
+
+    with {:ok, state} <- ensure_slot(state, token, color) do
       broadcast(state)
-      {:reply, {:ok, payload(state, token, :white)}, state}
+      {:reply, {:ok, payload(state, token, color)}, state}
     end
   end
 
@@ -81,9 +83,9 @@ defmodule LiveChess.GameServer do
         {:reply, {:ok, payload(updated, token, color)}, updated}
 
       true ->
-        with {:ok, state} <- ensure_slot(state, token, :black) do
+        with {:ok, state, color} <- claim_available_slot(state, token) do
           state = maybe_activate(state)
-          {:reply, {:ok, payload(state, token, :black)}, state}
+          {:reply, {:ok, payload(state, token, color)}, state}
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -192,6 +194,23 @@ defmodule LiveChess.GameServer do
         {:ok, state}
 
       _other ->
+        {:error, :slot_taken}
+    end
+  end
+
+  defp claim_available_slot(state, token) do
+    cond do
+      state.players.white == nil ->
+        with {:ok, state} <- ensure_slot(state, token, :white) do
+          {:ok, state, :white}
+        end
+
+      state.players.black == nil ->
+        with {:ok, state} <- ensure_slot(state, token, :black) do
+          {:ok, state, :black}
+        end
+
+      true ->
         {:error, :slot_taken}
     end
   end
@@ -347,6 +366,10 @@ defmodule LiveChess.GameServer do
 
   defp serialize_player(%{token: token, connected?: connected?}) do
     %{token: token, connected?: connected?}
+  end
+
+  defp random_color do
+    Enum.random([:white, :black])
   end
 
   defp player?(state, token) do

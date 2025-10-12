@@ -130,6 +130,10 @@ defmodule LiveChessWeb.LobbyLive do
           <p class="text-sm font-medium text-red-600">{@error}</p>
         <% end %>
       </div>
+
+      <div class="mt-10 rounded-xl border border-dashed border-emerald-400/60 bg-emerald-50/60 p-5 text-sm text-emerald-800 shadow-sm dark:border-emerald-400/40 dark:bg-emerald-900/20 dark:text-emerald-200">
+        Built as an experiment in LiveView (Elixir + Phoenix) with GPT-5-Codex.
+      </div>
     </div>
     """
   end

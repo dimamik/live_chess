@@ -15,6 +15,8 @@ defmodule LiveChessWeb.GameLive do
       |> assign(:game, nil)
       |> assign(:share_url, build_share_url(room_id))
       |> assign(:player_token, socket.assigns.player_token)
+      |> assign(:show_leave_modal, false)
+      |> assign(:page_title, "LiveView Chess")
 
     if connected?(socket) do
       Games.subscribe(room_id)
@@ -55,7 +57,12 @@ defmodule LiveChessWeb.GameLive do
            |> push_navigate(to: ~p"/")}
 
         state when is_map(state) ->
-          {:ok, assign(socket, :game, state)}
+          role = infer_role_from_state(state, socket.assigns.player_token) || socket.assigns.role
+
+          {:ok,
+           socket
+           |> assign(:role, role)
+           |> assign(:game, state)}
 
         _ ->
           {:ok, socket}
@@ -79,6 +86,25 @@ defmodule LiveChessWeb.GameLive do
       {:error, _} ->
         {:noreply, assign(socket, :error_message, "Unable to claim a seat right now.")}
     end
+  end
+
+  def handle_event("request_home", _params, socket) do
+    if game_pending?(socket.assigns.game) do
+      {:noreply, assign(socket, :show_leave_modal, true)}
+    else
+      {:noreply, push_navigate(socket, to: ~p"/")}
+    end
+  end
+
+  def handle_event("cancel_leave", _params, socket) do
+    {:noreply, assign(socket, :show_leave_modal, false)}
+  end
+
+  def handle_event("confirm_leave", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_leave_modal, false)
+     |> push_navigate(to: ~p"/")}
   end
 
   def handle_event("select_square", %{"square" => square}, socket) do
@@ -110,8 +136,12 @@ defmodule LiveChessWeb.GameLive do
 
   @impl true
   def handle_info({:game_state, state}, socket) do
+    previous_game = socket.assigns.game
+
     socket =
       socket
+      |> maybe_play_join_sound(previous_game, state)
+      |> maybe_play_move_sound(previous_game, state)
       |> assign(:game, state)
       |> assign(:error_message, nil)
       |> maybe_reset_selection(state)
@@ -243,18 +273,26 @@ defmodule LiveChessWeb.GameLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="mx-auto max-w-6xl px-4 py-8">
+    <div id="game-surface" phx-hook="SoundEffects" class="mx-auto max-w-6xl px-4 py-8">
       <div class="flex flex-col gap-6 lg:flex-row">
         <div class="flex-1">
           <%= if @game do %>
             <div class="chess-board-panel">
-              <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  Room {@room_id}
-                </h2>
-                <div class="text-sm text-slate-600 dark:text-slate-300">
-                  Turn: {human_turn(@game.turn)}
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div class="flex flex-wrap items-center gap-3">
+                  <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                    Room {@room_id}
+                  </h2>
+                  <button
+                    type="button"
+                    phx-click="request_home"
+                    class="inline-flex items-center gap-2 rounded-full border border-slate-300 px-3 py-1 text-sm font-medium text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:ring-slate-500"
+                  >
+                    <span class="hidden sm:inline">Back to lobby</span>
+                    <span class="sm:hidden">Lobby</span>
+                  </button>
                 </div>
+                <.turn_indicator game={@game} player_token={@player_token} />
               </div>
               <div class={"mt-2 text-sm " <> status_classes(@game)}>{status_line(@game)}</div>
 
@@ -360,6 +398,45 @@ defmodule LiveChessWeb.GameLive do
           <% end %>
         </div>
       </div>
+      <%= if @show_leave_modal do %>
+        <div class="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm">
+          <div
+            phx-click="cancel_leave"
+            class="absolute inset-0 h-full w-full"
+            aria-hidden="true"
+          >
+          </div>
+          <div
+            class="relative z-10 w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-700 dark:bg-slate-900"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="leave-game-title"
+          >
+            <h2 id="leave-game-title" class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+              Leave game?
+            </h2>
+            <p class="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              The game is still in progress. Leaving now will return you to the lobby and keep your seat active for a few minutes.
+            </p>
+            <div class="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                phx-click="cancel_leave"
+                class="inline-flex items-center rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:ring-slate-500"
+              >
+                Stay
+              </button>
+              <button
+                type="button"
+                phx-click="confirm_leave"
+                class="inline-flex items-center rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 disabled:opacity-60"
+              >
+                Leave game
+              </button>
+            </div>
+          </div>
+        </div>
+      <% end %>
     </div>
     """
   end
@@ -541,6 +618,27 @@ defmodule LiveChessWeb.GameLive do
   defp capture_highlight?(_available_moves, _cell, _role), do: false
 
   attr :game, :map, default: nil
+  attr :player_token, :string, default: nil
+
+  defp turn_indicator(assigns) do
+    assigns =
+      assigns
+      |> assign(:indicator, turn_indicator_data(assigns.game, assigns.player_token))
+
+    ~H"""
+    <div class={"inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold transition " <> @indicator.class}>
+      <span class={"h-2.5 w-2.5 rounded-full " <> @indicator.dot_class}></span>
+      <span>{@indicator.label}</span>
+      <%= if @indicator.sublabel do %>
+        <span class="text-xs font-medium text-slate-600 dark:text-slate-300">
+          {@indicator.sublabel}
+        </span>
+      <% end %>
+    </div>
+    """
+  end
+
+  attr :game, :map, default: nil
   attr :color, :atom, required: true
   attr :token, :string, default: nil
 
@@ -562,7 +660,7 @@ defmodule LiveChessWeb.GameLive do
             <p class="text-xs text-slate-500 dark:text-slate-400">{@slot.description}</p>
           </div>
         </div>
-        <span class={"inline-flex items-center rounded-full px-2 py-1 text-xs font-medium " <> @slot.badge_class}>
+        <span class={"inline-flex items-center rounded-full px-2 py-1 text-xs font-medium whitespace-nowrap " <> @slot.badge_class}>
           {@slot.badge_text}
         </span>
       </div>
@@ -584,65 +682,268 @@ defmodule LiveChessWeb.GameLive do
   end
 
   defp seat_details(game, color, token) do
+    active_turn? = Map.get(game, :turn) == color
+
     case game.players[color] do
       nil ->
         %{
           role_label: color_label(color),
           title: "Seat available",
-          description: "The #{color_label(color)} seat is open for a player.",
+          description:
+            if(active_turn?,
+              do: "Waiting for a #{color_label(color)} player to move.",
+              else: "The #{color_label(color)} seat is open for a player."
+            ),
           container_class:
-            "border border-dashed border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900/40",
-          dot_class: "border border-slate-300 bg-transparent",
-          badge_text: "Open",
-          badge_class: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200"
+            if active_turn? do
+              "border border-amber-200 bg-amber-50/80 dark:border-amber-500/60 dark:bg-amber-900/25"
+            else
+              "border border-dashed border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900/40"
+            end,
+          dot_class:
+            if active_turn? do
+              "bg-amber-400 animate-pulse"
+            else
+              "border border-slate-300 bg-transparent"
+            end,
+          badge_text: if(active_turn?, do: "Needed", else: "Open"),
+          badge_class:
+            if active_turn? do
+              "bg-amber-100 text-amber-700 dark:bg-amber-800 dark:text-amber-100"
+            else
+              "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200"
+            end
         }
 
       %{token: ^token, connected?: connected?} ->
+        base_container =
+          "border border-emerald-300 bg-emerald-50 dark:border-emerald-500/60 dark:bg-emerald-900/40 shadow-sm"
+
         %{
           role_label: color_label(color),
           title: "You",
-          description: "You are playing as #{color_label(color)}.",
+          description:
+            if(active_turn?,
+              do: "It's your turn. Move your #{color_label(color)} pieces.",
+              else: "Waiting for #{opponent_label(color)} to move."
+            ),
           container_class:
-            "border border-emerald-300 bg-emerald-50 dark:border-emerald-500/60 dark:bg-emerald-900/40 shadow-sm",
-          dot_class: "bg-emerald-500",
-          badge_text: if(connected?, do: "Connected", else: "Reconnecting"),
-          badge_class:
-            if connected? do
-              "bg-emerald-100 text-emerald-700 dark:bg-emerald-800 dark:text-emerald-100"
+            if active_turn? do
+              base_container <> " ring-2 ring-emerald-300/70"
             else
-              "bg-amber-100 text-amber-700 dark:bg-amber-800 dark:text-amber-100"
+              base_container
+            end,
+          dot_class:
+            if active_turn? do
+              "bg-emerald-500 animate-pulse"
+            else
+              "bg-emerald-500"
+            end,
+          badge_text:
+            cond do
+              active_turn? -> "Your move"
+              connected? -> "Waiting"
+              true -> "Reconnecting"
+            end,
+          badge_class:
+            cond do
+              active_turn? ->
+                "bg-emerald-100 text-emerald-700 dark:bg-emerald-800 dark:text-emerald-100"
+
+              connected? ->
+                "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200"
+
+              true ->
+                "bg-amber-100 text-amber-700 dark:bg-amber-800 dark:text-amber-100"
             end
         }
 
       %{connected?: true} ->
+        base_container =
+          "border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60"
+
         %{
           role_label: color_label(color),
           title: "Opponent ready",
-          description: "An opponent is seated as #{color_label(color)}.",
+          description:
+            if active_turn? do
+              "The #{color_label(color)} player is thinking."
+            else
+              "#{color_label(color)} will move after you."
+            end,
           container_class:
-            "border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60",
-          dot_class: "bg-emerald-400",
-          badge_text: "Online",
-          badge_class: "bg-emerald-100 text-emerald-700 dark:bg-emerald-800 dark:text-emerald-100"
+            if active_turn? do
+              base_container <> " ring-2 ring-sky-300/60"
+            else
+              base_container
+            end,
+          dot_class:
+            if active_turn? do
+              "bg-sky-400 animate-pulse"
+            else
+              "bg-emerald-400"
+            end,
+          badge_text: if(active_turn?, do: "Their move", else: "Online"),
+          badge_class:
+            if active_turn? do
+              "bg-sky-100 text-sky-700 dark:bg-sky-800 dark:text-sky-100"
+            else
+              "bg-emerald-100 text-emerald-700 dark:bg-emerald-800 dark:text-emerald-100"
+            end
         }
 
       %{connected?: false} ->
         %{
           role_label: color_label(color),
           title: "Opponent disconnected",
-          description: "The #{color_label(color)} player is reconnecting.",
+          description:
+            if active_turn? do
+              "Waiting for #{color_label(color)} to reconnect and move."
+            else
+              "They will rejoin automatically when back online."
+            end,
           container_class:
             "border border-amber-200 bg-amber-50/80 dark:border-amber-500/50 dark:bg-amber-900/30",
-          dot_class: "bg-amber-400",
-          badge_text: "Offline",
+          dot_class:
+            if active_turn? do
+              "bg-amber-400 animate-pulse"
+            else
+              "bg-amber-400"
+            end,
+          badge_text: if(active_turn?, do: "Paused", else: "Offline"),
           badge_class: "bg-amber-100 text-amber-700 dark:bg-amber-800 dark:text-amber-100"
         }
     end
   end
 
+  defp maybe_play_move_sound(socket, nil, _new_state), do: socket
+
+  defp maybe_play_move_sound(socket, previous_state, new_state) do
+    previous_last = previous_state && Map.get(previous_state, :last_move)
+    new_last = Map.get(new_state, :last_move)
+    player_color = color_for_token(new_state, socket.assigns.player_token)
+
+    cond do
+      new_last == nil -> socket
+      previous_last == new_last -> socket
+      player_color == new_last.color -> socket
+      true -> push_event(socket, "play-move-sound", %{})
+    end
+  end
+
+  defp maybe_play_join_sound(socket, nil, _new_state), do: socket
+
+  defp maybe_play_join_sound(socket, previous_state, new_state) do
+    joined_color =
+      [:white, :black]
+      |> Enum.find(fn color ->
+        player_presence(previous_state, color) == nil and
+          player_presence(new_state, color) != nil
+      end)
+
+    if joined_color do
+      push_event(socket, "play-join-sound", %{color: color_label(joined_color)})
+    else
+      socket
+    end
+  end
+
+  defp player_presence(nil, _color), do: nil
+
+  defp player_presence(%{players: players}, color) do
+    Map.get(players, color)
+  end
+
+  defp player_presence(_other, _color), do: nil
+
+  defp game_pending?(%{status: status}) do
+    finished_statuses = [
+      :completed,
+      :checkmate,
+      :stalemate,
+      :draw,
+      :insufficient_material,
+      :threefold_repetition,
+      :fifty_move_rule,
+      :timeout,
+      :resigned,
+      :abandoned
+    ]
+
+    status not in finished_statuses
+  end
+
+  defp game_pending?(_), do: false
+
+  defp infer_role_from_state(%{players: players}, token) when is_binary(token) do
+    cond do
+      match?(%{token: ^token}, players.white) -> :white
+      match?(%{token: ^token}, players.black) -> :black
+      true -> nil
+    end
+  end
+
+  defp infer_role_from_state(_state, _token), do: nil
+
+  defp color_for_token(state, token), do: infer_role_from_state(state, token)
+
   defp color_label(color) do
     color
     |> Atom.to_string()
     |> String.capitalize()
+  end
+
+  defp opponent_label(:white), do: color_label(:black)
+  defp opponent_label(:black), do: color_label(:white)
+
+  defp turn_indicator_data(nil, _player_token) do
+    %{
+      class: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-200",
+      dot_class: "bg-slate-400",
+      label: "Loading game",
+      sublabel: nil
+    }
+  end
+
+  defp turn_indicator_data(game, player_token) do
+    players = Map.get(game, :players, %{})
+    active_color = Map.get(game, :turn) || :white
+    active_label = color_label(active_color)
+    active_player = Map.get(players, active_color)
+
+    cond do
+      active_player && player_token && active_player.token == player_token ->
+        %{
+          class:
+            "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-100 ring-1 ring-inset ring-emerald-300/70",
+          dot_class: "bg-emerald-500 animate-pulse",
+          label: "Your move",
+          sublabel: "#{active_label} pieces"
+        }
+
+      active_player && active_player.connected? ->
+        %{
+          class: "bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-100",
+          dot_class: "bg-sky-400 animate-pulse",
+          label: "#{active_label} to move",
+          sublabel: "Opponent is thinking"
+        }
+
+      active_player ->
+        %{
+          class: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-100",
+          dot_class: "bg-amber-400 animate-pulse",
+          label: "#{active_label} to move",
+          sublabel: "Opponent reconnecting"
+        }
+
+      true ->
+        %{
+          class: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-100",
+          dot_class: "bg-amber-400 animate-pulse",
+          label: "#{active_label} to move",
+          sublabel: "Seat still open"
+        }
+    end
   end
 end

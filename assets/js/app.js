@@ -89,6 +89,77 @@ const copyToClipboard = async (text) => {
   }
 };
 
+let audioContext;
+let audioPrimed = false;
+
+const getAudioContext = () => {
+  if (typeof window === "undefined") return null;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!audioContext) {
+    audioContext = new Ctx();
+  }
+  return audioContext;
+};
+
+const resumeAudioContext = async () => {
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === "suspended") {
+    try {
+      await ctx.resume();
+    } catch (_error) {
+      // Browsers may prevent auto-resume without a user gesture.
+    }
+  }
+  return ctx;
+};
+
+const scheduleTone = (ctx, frequency, options = {}) => {
+  if (!ctx) return;
+  const { duration = 0.18, type = "sine", gain = 0.18, delay = 0 } = options;
+  const oscillator = ctx.createOscillator();
+  const gainNode = ctx.createGain();
+
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, ctx.currentTime + delay);
+
+  gainNode.gain.setValueAtTime(gain, ctx.currentTime + delay);
+  gainNode.gain.exponentialRampToValueAtTime(
+    0.0001,
+    ctx.currentTime + delay + duration
+  );
+
+  oscillator.connect(gainNode).connect(ctx.destination);
+  oscillator.start(ctx.currentTime + delay);
+  oscillator.stop(ctx.currentTime + delay + duration + 0.05);
+};
+
+const playMoveSound = async () => {
+  const ctx = await resumeAudioContext();
+  if (!ctx) return;
+
+  scheduleTone(ctx, 520, { duration: 0.14, type: "triangle", gain: 0.22 });
+  scheduleTone(ctx, 660, {
+    duration: 0.16,
+    type: "triangle",
+    gain: 0.18,
+    delay: 0.1,
+  });
+};
+
+const playJoinSound = async () => {
+  const ctx = await resumeAudioContext();
+  if (!ctx) return;
+
+  scheduleTone(ctx, 440, { duration: 0.16, type: "sine", gain: 0.18 });
+  scheduleTone(ctx, 660, {
+    duration: 0.2,
+    type: "sine",
+    gain: 0.16,
+    delay: 0.12,
+  });
+};
+
 const Hooks = {
   CopyShareLink: {
     mounted() {
@@ -167,6 +238,26 @@ const Hooks = {
       if (selection && typeof selection.removeAllRanges === "function") {
         selection.removeAllRanges();
       }
+    },
+  },
+  SoundEffects: {
+    mounted() {
+      if (!audioPrimed) {
+        const prime = () => {
+          audioPrimed = true;
+          resumeAudioContext();
+        };
+
+        window.addEventListener("pointerdown", prime, {
+          once: true,
+          passive: true,
+        });
+        window.addEventListener("keydown", prime, { once: true });
+      }
+
+      this.handleEvent("play-move-sound", playMoveSound);
+      this.handleEvent("play-join-sound", playJoinSound);
+      resumeAudioContext();
     },
   },
 };
