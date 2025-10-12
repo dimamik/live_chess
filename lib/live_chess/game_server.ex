@@ -207,7 +207,9 @@ defmodule LiveChess.GameServer do
     end
   end
 
-  defp maybe_finish(state, %ChessGame{status: :playing}), do: state
+  defp maybe_finish(state, %ChessGame{status: status}) when status in [:playing, :check] do
+    Map.put(state, :status, :active)
+  end
 
   defp maybe_finish(state, %ChessGame{status: status}) do
     %{state | status: status}
@@ -299,10 +301,24 @@ defmodule LiveChess.GameServer do
   end
 
   defp serialize(state) do
+    checking_color =
+      case state.game.check do
+        "w" -> :white
+        "b" -> :black
+        _ -> nil
+      end
+
+    in_check =
+      case checking_color do
+        :white -> :black
+        :black -> :white
+        _ -> nil
+      end
+
     winner =
-      case {state.status, state.game.check} do
-        {:completed, "w"} -> :white
-        {:completed, "b"} -> :black
+      case {state.status, checking_color} do
+        {:completed, :white} -> :white
+        {:completed, :black} -> :black
         _ -> nil
       end
 
@@ -310,6 +326,8 @@ defmodule LiveChess.GameServer do
       room_id: state.room_id,
       status: state.status,
       winner: winner,
+      checking_color: checking_color,
+      in_check: in_check,
       players: serialize_players(state.players),
       last_move: state.last_move,
       board: LiveChess.Games.Board.from_game(state.game),

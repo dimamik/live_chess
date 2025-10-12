@@ -5,8 +5,6 @@ defmodule LiveChessWeb.GameLive do
 
   @impl true
   def mount(%{"room_id" => room_id}, _session, socket) do
-    if connected?(socket), do: Games.subscribe(room_id)
-
     socket =
       socket
       |> assign(:room_id, room_id)
@@ -15,30 +13,53 @@ defmodule LiveChessWeb.GameLive do
       |> assign(:error_message, nil)
       |> assign(:role, :spectator)
       |> assign(:game, nil)
-      |> assign(:share_url, nil)
+      |> assign(:share_url, build_share_url(room_id))
       |> assign(:player_token, socket.assigns.player_token)
 
-    case Games.connect(room_id, socket.assigns.player_token) do
-      {:ok, %{role: role, state: state}} ->
-        socket =
-          socket
-          |> assign(:role, role)
-          |> assign(:game, state)
-          |> assign(:share_url, build_share_url(room_id))
+    if connected?(socket) do
+      Games.subscribe(room_id)
 
-        {:ok, maybe_auto_join(socket, state)}
+      case Games.connect(room_id, socket.assigns.player_token) do
+        {:ok, %{role: role, state: state}} ->
+          socket =
+            socket
+            |> assign(:role, role)
+            |> assign(:game, state)
 
-      {:error, :not_found} ->
-        {:ok,
-         socket
-         |> put_flash(:error, "That room does not exist or has expired.")
-         |> push_navigate(to: ~p"/")}
+          {:ok, maybe_auto_join(socket, state)}
 
-      {:error, _reason} ->
-        {:ok,
-         socket
-         |> put_flash(:error, "We couldn't connect you to that room. Try again from the lobby.")
-         |> push_navigate(to: ~p"/")}
+        {:error, :not_found} ->
+          {:ok,
+           socket
+           |> put_flash(:error, "That room does not exist or has expired.")
+           |> push_navigate(to: ~p"/")}
+
+        {:error, _reason} ->
+          {:ok,
+           socket
+           |> put_flash(:error, "We couldn't connect you to that room. Try again from the lobby.")
+           |> push_navigate(to: ~p"/")}
+      end
+    else
+      case Games.game_state(room_id) do
+        {:error, :not_found} ->
+          {:ok,
+           socket
+           |> put_flash(:error, "That room does not exist or has expired.")
+           |> push_navigate(to: ~p"/")}
+
+        {:error, _reason} ->
+          {:ok,
+           socket
+           |> put_flash(:error, "We couldn't connect you to that room. Try again from the lobby.")
+           |> push_navigate(to: ~p"/")}
+
+        state when is_map(state) ->
+          {:ok, assign(socket, :game, state)}
+
+        _ ->
+          {:ok, socket}
+      end
     end
   end
 
@@ -215,14 +236,18 @@ defmodule LiveChessWeb.GameLive do
       <div class="flex flex-col gap-6 lg:flex-row">
         <div class="flex-1">
           <%= if @game do %>
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 shadow-sm">
+            <div class="chess-board-panel">
               <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-slate-800">Room {@room_id}</h2>
-                <div class="text-sm text-slate-600">Turn: {human_turn(@game.turn)}</div>
+                <h2 class="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                  Room {@room_id}
+                </h2>
+                <div class="text-sm text-slate-600 dark:text-slate-300">
+                  Turn: {human_turn(@game.turn)}
+                </div>
               </div>
               <div class={"mt-2 text-sm " <> status_classes(@game)}>{status_line(@game)}</div>
 
-              <div class="mt-4 grid grid-cols-8 gap-1">
+              <div class="chess-board-grid">
                 <%= for row <- oriented_board(@game, @role) do %>
                   <%= for cell <- row do %>
                     <button
@@ -239,10 +264,12 @@ defmodule LiveChessWeb.GameLive do
                         )
                       }
                     >
-                      <span class="text-3xl font-semibold">{piece_symbol(cell.piece)}</span>
+                      <div class="piece-wrapper">
+                        {piece_svg(cell.piece)}
+                      </div>
                       <%= if show_move_dot?(@available_moves, cell, @role) do %>
                         <span class="pointer-events-none absolute inset-0 flex items-center justify-center">
-                          <span class="h-3 w-3 rounded-full bg-emerald-600/60"></span>
+                          <span class="move-dot"></span>
                         </span>
                       <% end %>
                       <span class="sr-only">{cell.id}</span>
@@ -252,32 +279,34 @@ defmodule LiveChessWeb.GameLive do
               </div>
             </div>
           <% else %>
-            <div class="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <div class="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-400 dark:bg-amber-900/40 dark:text-amber-200">
               Preparing game state...
             </div>
           <% end %>
         </div>
 
         <div class="w-full max-w-sm space-y-4">
-          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <h3 class="text-lg font-semibold text-slate-800">Share</h3>
-            <p class="mt-1 text-sm text-slate-600">Send this link to a friend so they can join.</p>
+          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Share</h3>
+            <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              Send this link to a friend so they can join.
+            </p>
             <div class="mt-3">
               <input
                 type="text"
                 readonly
                 value={@share_url}
-                class="w-full rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                class="w-full rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
               />
-              <p class="mt-2 text-sm text-slate-500">
+              <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
                 Room code: <span class="font-mono uppercase">{@room_id}</span>
               </p>
             </div>
           </div>
 
-          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <h3 class="text-lg font-semibold text-slate-800">Players</h3>
-            <div class="mt-3 space-y-2 text-sm text-slate-700">
+          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Players</h3>
+            <div class="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-300">
               <.player_line game={@game} color={:white} token={@player_token} />
               <.player_line game={@game} color={:black} token={@player_token} />
             </div>
@@ -286,16 +315,16 @@ defmodule LiveChessWeb.GameLive do
               <button
                 type="button"
                 phx-click="claim-seat"
-                class="mt-4 w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2"
+                class="mt-4 w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-900"
               >
                 Join the game
               </button>
             <% end %>
           </div>
 
-          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <h3 class="text-lg font-semibold text-slate-800">Moves</h3>
-            <div class="mt-2 max-h-80 space-y-1 overflow-y-auto text-sm text-slate-700">
+          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Moves</h3>
+            <div class="mt-2 max-h-80 space-y-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
               <%= if @game && @game.history != [] do %>
                 <%= for {move, index} <- Enum.with_index(@game.history, 1) do %>
                   <div>
@@ -304,13 +333,13 @@ defmodule LiveChessWeb.GameLive do
                   </div>
                 <% end %>
               <% else %>
-                <p class="text-slate-500">No moves yet.</p>
+                <p class="text-slate-500 dark:text-slate-400">No moves yet.</p>
               <% end %>
             </div>
           </div>
 
           <%= if @error_message do %>
-            <div class="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+            <div class="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/60 dark:bg-red-900/40 dark:text-red-200">
               {@error_message}
             </div>
           <% end %>
@@ -321,6 +350,11 @@ defmodule LiveChessWeb.GameLive do
   end
 
   defp status_line(%{status: :waiting}), do: "Waiting for an opponent..."
+
+  defp status_line(%{status: :active, in_check: color}) when color in [:white, :black] do
+    "Check! #{human_turn(color)} king is in check"
+  end
+
   defp status_line(%{status: status}) when status in [:active, :playing], do: "Game in progress"
   defp status_line(%{status: :completed, winner: :white}), do: "Checkmate! White wins 🎉"
   defp status_line(%{status: :completed, winner: :black}), do: "Checkmate! Black wins 🎉"
@@ -338,11 +372,21 @@ defmodule LiveChessWeb.GameLive do
 
   defp format_status(status), do: to_string(status)
 
-  defp status_classes(%{status: :waiting}), do: "text-slate-600"
-  defp status_classes(%{status: status}) when status in [:active, :playing], do: "text-slate-600"
-  defp status_classes(%{status: :completed, winner: :white}), do: "text-emerald-700 font-semibold"
-  defp status_classes(%{status: :completed, winner: :black}), do: "text-emerald-700 font-semibold"
-  defp status_classes(_), do: "text-slate-700"
+  defp status_classes(%{status: :waiting}), do: "text-slate-600 dark:text-slate-300"
+
+  defp status_classes(%{status: :active, in_check: color}) when color in [:white, :black],
+    do: "text-amber-600 dark:text-amber-300 font-medium"
+
+  defp status_classes(%{status: status}) when status in [:active, :playing],
+    do: "text-slate-600 dark:text-slate-300"
+
+  defp status_classes(%{status: :completed, winner: :white}),
+    do: "text-emerald-700 dark:text-emerald-300 font-semibold"
+
+  defp status_classes(%{status: :completed, winner: :black}),
+    do: "text-emerald-700 dark:text-emerald-300 font-semibold"
+
+  defp status_classes(_), do: "text-slate-700 dark:text-slate-200"
 
   defp joinable?(role, game) do
     (role not in [:white, :black] and game) &&
@@ -356,18 +400,18 @@ defmodule LiveChessWeb.GameLive do
   defp square_classes(role, cell, selected, last_move, available_moves) do
     base =
       [
-        "relative aspect-square w-full rounded-sm border text-center transition",
-        if(cell.light?, do: "bg-emerald-50", else: "bg-emerald-100"),
-        if(selected == cell.id, do: "ring-2 ring-emerald-500", else: nil),
+        "chess-square",
+        if(cell.light?, do: "chess-square-light", else: "chess-square-dark"),
+        if(selected == cell.id, do: "chess-square-active", else: nil),
         if(last_move && cell.id in [last_move.from, last_move.to],
-          do: "border-emerald-400",
-          else: "border-transparent"
-        ),
-        if(capture_highlight?(available_moves, cell, role),
-          do: "ring-2 ring-emerald-400",
+          do: "chess-square-last-move",
           else: nil
         ),
-        if(clickable?(role, cell), do: "hover:brightness-95", else: "cursor-default")
+        if(capture_highlight?(available_moves, cell, role),
+          do: "chess-square-capture",
+          else: nil
+        ),
+        if(clickable?(role, cell), do: "cursor-pointer", else: "cursor-default")
       ]
 
     Enum.reject(base, &is_nil/1)
@@ -376,22 +420,96 @@ defmodule LiveChessWeb.GameLive do
   defp clickable?(role, %{piece: %{color: color}}) when role == color, do: true
   defp clickable?(_role, _cell), do: false
 
-  defp piece_symbol(nil), do: ""
+  defp piece_svg(nil), do: nil
 
-  # Unicode chess symbols
-  defp piece_symbol(%{color: :white, type: "k"}), do: "♔"
-  defp piece_symbol(%{color: :white, type: "q"}), do: "♕"
-  defp piece_symbol(%{color: :white, type: "r"}), do: "♖"
-  defp piece_symbol(%{color: :white, type: "b"}), do: "♗"
-  defp piece_symbol(%{color: :white, type: "n"}), do: "♘"
-  defp piece_symbol(%{color: :white, type: "p"}), do: "♙"
-  defp piece_symbol(%{color: :black, type: "k"}), do: "♚"
-  defp piece_symbol(%{color: :black, type: "q"}), do: "♛"
-  defp piece_symbol(%{color: :black, type: "r"}), do: "♜"
-  defp piece_symbol(%{color: :black, type: "b"}), do: "♝"
-  defp piece_symbol(%{color: :black, type: "n"}), do: "♞"
-  defp piece_symbol(%{color: :black, type: "p"}), do: "♟"
-  defp piece_symbol(_), do: "?"
+  defp piece_svg(%{color: color, type: type}) do
+    assigns = %{color: color, shape: piece_shape(type)}
+
+    ~H"""
+    <svg viewBox="0 0 64 64" class={"piece-svg piece-#{@color}"} role="img" aria-hidden="true">
+      {@shape}
+    </svg>
+    """
+  end
+
+  defp piece_shape("p") do
+    assigns = %{}
+
+    ~H"""
+    <circle class="piece-detail" cx="32" cy="20" r="6" />
+    <path class="piece-body" d="M24 48h16l3-12c0-6.5-5-12-11-12s-11 5.5-11 12z" />
+    <rect class="piece-base" x="20" y="48" width="24" height="8" rx="2" />
+    """
+  end
+
+  defp piece_shape("r") do
+    assigns = %{}
+
+    ~H"""
+    <path class="piece-detail" d="M20 20h6v-6h6v6h4v-6h6v6h6v8H20z" />
+    <path class="piece-body" d="M18 28h28v24h6v10H12V52h6z" />
+    <rect class="piece-base" x="16" y="50" width="32" height="6" rx="2" />
+    """
+  end
+
+  defp piece_shape("n") do
+    assigns = %{}
+
+    ~H"""
+    <path
+      class="piece-body"
+      d="M20 52V36l12-14-8-4 14-8 10 10-4 6 6 8v18h-8l-6 8H20z"
+    />
+    <circle class="piece-dot" cx="40" cy="20" r="2.4" />
+    <path class="piece-line" d="M26 40c6 2 10 8 10 16" />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="2" />
+    """
+  end
+
+  defp piece_shape("b") do
+    assigns = %{}
+
+    ~H"""
+    <path
+      class="piece-body"
+      d="M32 12c-8 0-14 6.6-14 15 0 5.4 2.4 9.9 6.6 13.2L20 48v8h24v-8l-4.6-7.8C43.5 37 46 32.6 46 27c0-8.4-6-15-14-15z"
+    />
+    <path class="piece-line" d="M24 30l16-12" />
+    <circle class="piece-detail" cx="32" cy="18" r="3" />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="2" />
+    """
+  end
+
+  defp piece_shape("q") do
+    assigns = %{}
+
+    ~H"""
+    <circle class="piece-detail" cx="18" cy="20" r="3" />
+    <circle class="piece-detail" cx="32" cy="14" r="4" />
+    <circle class="piece-detail" cx="46" cy="20" r="3" />
+    <path class="piece-body" d="M18 24h28l6 10-8 10 4 6v8H16v-8l4-6-8-10z" />
+    <rect class="piece-base" x="16" y="50" width="32" height="6" rx="2" />
+    """
+  end
+
+  defp piece_shape("k") do
+    assigns = %{}
+
+    ~H"""
+    <path class="piece-detail" d="M30 8h4v6h6v4h-6v6h-4v-6h-6v-4h6z" />
+    <path class="piece-body" d="M22 28h20l6 8-8 10 4 6v8H20v-8l4-6-8-10z" />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="2" />
+    """
+  end
+
+  defp piece_shape(_type) do
+    assigns = %{}
+
+    ~H"""
+    <rect class="piece-body" x="24" y="20" width="16" height="24" rx="4" />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="2" />
+    """
+  end
 
   defp fetch_moves(socket, square) do
     case Games.available_moves(socket.assigns.room_id, socket.assigns.player_token, square) do

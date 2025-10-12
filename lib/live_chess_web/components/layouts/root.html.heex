@@ -12,6 +12,12 @@
     </script>
     <script>
       (() => {
+        const applyDarkClass = (theme) => {
+          const systemPrefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          const isDark = theme === "dark" || (theme === "system" && systemPrefersDark);
+          document.documentElement.classList.toggle("dark", isDark);
+        };
+
         const setTheme = (theme) => {
           if (theme === "system") {
             localStorage.removeItem("phx:theme");
@@ -20,9 +26,32 @@
             localStorage.setItem("phx:theme", theme);
             document.documentElement.setAttribute("data-theme", theme);
           }
+          applyDarkClass(theme);
         };
-        setTheme(localStorage.getItem("phx:theme") || "system");
-        window.addEventListener("storage", (e) => e.key === "phx:theme" && setTheme(e.newValue || "system"));
+
+        const storedTheme = localStorage.getItem("phx:theme") || "system";
+        setTheme(storedTheme);
+
+        if (window.matchMedia) {
+          const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+          const handleChange = () => {
+            if ((localStorage.getItem("phx:theme") || "system") === "system") {
+              applyDarkClass("system");
+            }
+          };
+          if (typeof mediaQuery.addEventListener === "function") {
+            mediaQuery.addEventListener("change", handleChange);
+          } else if (typeof mediaQuery.addListener === "function") {
+            mediaQuery.addListener(handleChange);
+          }
+        }
+
+        window.addEventListener("storage", (event) => {
+          if (event.key === "phx:theme") {
+            setTheme(event.newValue || "system");
+          }
+        });
+
         window.addEventListener("phx:set-theme", ({ detail: { theme } }) => setTheme(theme));
       })();
     </script>

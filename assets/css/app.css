@@ -97,6 +97,216 @@
 @custom-variant phx-change-loading ([".phx-change-loading&", ".phx-change-loading &"]);
 
 /* Make LiveView wrapper divs transparent for layout */
-[data-phx-root-id] { display: contents }
+[data-phx-root-id] {
+  display: contents
+}
+
+@layer base {
+  :root {
+    --app-bg: #f8fafc;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --panel-bg: #ffffff;
+    --panel-border: #e2e8f0;
+    --panel-shadow: rgba(15, 23, 42, 0.08);
+    --board-light: #eeeed2;
+    --board-dark: #769656;
+    --board-outline: rgba(15, 23, 42, 0.12);
+    --board-active-ring: rgba(253, 224, 71, 0.65);
+    --board-move-ring: rgba(45, 212, 191, 0.55);
+    --piece-white-fill: #f5f7fa;
+    --piece-white-shadow: #d7dee8;
+    --piece-white-outline: #2e3a4b;
+    --piece-white-highlight: #ffffff;
+    --piece-black-fill: #414957;
+    --piece-black-shadow: #252c37;
+    --piece-black-outline: #0f172a;
+    --piece-black-highlight: #5a6372;
+  }
+
+  html.dark,
+  [data-theme="dark"] {
+    --app-bg: #0f1722;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --panel-bg: #111e2f;
+    --panel-border: #1f2f45;
+    --panel-shadow: rgba(3, 7, 18, 0.6);
+    --board-light: #d4dcb5;
+    --board-dark: #5d7b41;
+    --board-outline: rgba(148, 163, 184, 0.28);
+    --board-active-ring: rgba(251, 191, 36, 0.55);
+    --board-move-ring: rgba(45, 212, 191, 0.5);
+    --piece-white-fill: #f4f6fb;
+    --piece-white-shadow: #cfd8e7;
+    --piece-white-outline: #253447;
+    --piece-white-highlight: #ffffff;
+    --piece-black-fill: #242d3b;
+    --piece-black-shadow: #151c28;
+    --piece-black-outline: #e2e8f0;
+    --piece-black-highlight: #3a4555;
+  }
+
+  body {
+    background-color: var(--app-bg);
+    color: var(--text-primary);
+  }
+}
 
 /* This file is for your main application CSS */
+
+@layer components {
+  .chess-board-panel {
+    border-radius: 0.875rem;
+    border: 1px solid var(--panel-border);
+    padding: 1rem;
+    background-color: var(--panel-bg);
+    box-shadow: 0 16px 32px var(--panel-shadow);
+    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 200ms ease;
+  }
+
+  .chess-board-grid {
+    margin-top: 1rem;
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 0.25rem;
+  }
+
+  @media (min-width: 640px) {
+    .chess-board-grid {
+      gap: 0.375rem;
+    }
+  }
+
+  .chess-square {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 0.5rem;
+    border: 1px solid var(--board-outline);
+    text-align: center;
+    transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+    box-shadow: inset 0 2px 4px rgba(15, 23, 42, 0.12);
+    outline: none;
+  }
+
+  .chess-square-light {
+    background-color: var(--board-light);
+    color: var(--text-primary);
+    box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.25), inset 0 -2px 0 rgba(0, 0, 0, 0.08);
+  }
+
+  .chess-square-dark {
+    background-color: var(--board-dark);
+    color: #f8fafc;
+    box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.18), inset 0 -3px 0 rgba(15, 23, 42, 0.28);
+  }
+
+  .chess-square:hover {
+    transform: translateY(-2px);
+  }
+
+  .chess-square:focus-visible {
+    box-shadow: 0 0 0 3px var(--board-move-ring), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  }
+
+  .chess-square-active {
+    box-shadow: 0 0 0 3px var(--board-active-ring), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  }
+
+  .chess-square-last-move {
+    box-shadow: 0 0 0 3px var(--board-move-ring), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  }
+
+  .chess-square-capture {
+    box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  }
+
+  .piece-wrapper {
+    pointer-events: none;
+    display: flex;
+    height: 100%;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    filter: drop-shadow(0 5px 6px rgba(15, 23, 42, 0.3));
+  }
+
+  @media (min-width: 640px) {
+    .piece-wrapper {
+      padding: 0.375rem;
+    }
+  }
+
+  .move-dot {
+    display: inline-block;
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 9999px;
+    background: rgba(15, 23, 42, 0.28);
+    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.65);
+  }
+
+  html.dark .move-dot,
+  [data-theme="dark"] .move-dot {
+    background: rgba(226, 232, 240, 0.28);
+    box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.45);
+  }
+
+  .piece-svg {
+    width: 100%;
+    height: 100%;
+    max-width: 60px;
+  }
+
+  .piece-body,
+  .piece-detail,
+  .piece-base,
+  .piece-line {
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+
+  .piece-body {
+    fill: var(--piece-fill);
+    stroke: var(--piece-outline);
+    stroke-width: 2.2;
+  }
+
+  .piece-detail {
+    fill: var(--piece-highlight);
+    stroke: var(--piece-outline);
+    stroke-width: 1.6;
+  }
+
+  .piece-base {
+    fill: var(--piece-shadow);
+    stroke: var(--piece-outline);
+    stroke-width: 2.2;
+  }
+
+  .piece-line {
+    fill: none;
+    stroke: var(--piece-outline);
+    stroke-width: 2.2;
+  }
+
+  .piece-dot {
+    fill: var(--piece-outline);
+  }
+
+  .piece-white {
+    --piece-fill: var(--piece-white-fill);
+    --piece-shadow: var(--piece-white-shadow);
+    --piece-outline: var(--piece-white-outline);
+    --piece-highlight: var(--piece-white-highlight);
+  }
+
+  .piece-black {
+    --piece-fill: var(--piece-black-fill);
+    --piece-shadow: var(--piece-black-shadow);
+    --piece-outline: var(--piece-black-outline);
+    --piece-highlight: var(--piece-black-highlight);
+  }
+}
