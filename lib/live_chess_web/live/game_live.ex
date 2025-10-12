@@ -302,13 +302,27 @@ defmodule LiveChessWeb.GameLive do
             <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
               Send this link to a friend so they can join.
             </p>
-            <div class="mt-3">
+            <div
+              id={"share-link-#{@room_id}"}
+              class="mt-3"
+              phx-hook="CopyShareLink"
+              data-url={@share_url}
+              data-success-text="Link copied to clipboard"
+            >
               <input
                 type="text"
                 readonly
                 value={@share_url}
-                class="w-full rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                class="w-full cursor-pointer select-none rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                data-share-input
               />
+              <p
+                class="mt-2 hidden text-sm text-emerald-600 dark:text-emerald-400"
+                data-copy-message
+                role="status"
+                aria-live="polite"
+              >
+              </p>
               <p class="mt-2 text-sm text-slate-500 dark:text-slate-400">
                 Room code: <span class="font-mono uppercase">{@room_id}</span>
               </p>
@@ -321,16 +335,6 @@ defmodule LiveChessWeb.GameLive do
               <.player_line game={@game} color={:white} token={@player_token} />
               <.player_line game={@game} color={:black} token={@player_token} />
             </div>
-
-            <%= if joinable?(@role, @game) do %>
-              <button
-                type="button"
-                phx-click="claim-seat"
-                class="mt-4 w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-900"
-              >
-                Join the game
-              </button>
-            <% end %>
           </div>
 
           <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -398,11 +402,6 @@ defmodule LiveChessWeb.GameLive do
     do: "text-emerald-700 dark:text-emerald-300 font-semibold"
 
   defp status_classes(_), do: "text-slate-700 dark:text-slate-200"
-
-  defp joinable?(role, game) do
-    (role not in [:white, :black] and game) &&
-      Enum.any?([:white, :black], &(game.players[&1] == nil))
-  end
 
   defp human_turn(:white), do: "White"
   defp human_turn(:black), do: "Black"
@@ -543,43 +542,107 @@ defmodule LiveChessWeb.GameLive do
 
   attr :game, :map, default: nil
   attr :color, :atom, required: true
-  attr :token, :string, required: true
+  attr :token, :string, default: nil
 
   defp player_line(assigns) do
     assigns =
       assigns
-      |> assign(:label, assigns.color |> Atom.to_string() |> String.capitalize())
-      |> assign(:seat_status, seat_status(assigns.game, assigns.color, assigns.token))
-      |> assign(:connection_state, connection_state(assigns.game, assigns.color))
+      |> assign(:slot, seat_details(assigns.game, assigns.color, assigns.token))
 
     ~H"""
-    <div class="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-      <div>
-        <span class="font-medium">{@label}</span>
-        <span class="ml-2 text-xs uppercase tracking-wide text-slate-500">{@seat_status}</span>
+    <div class={"rounded-lg px-4 py-3 transition-colors " <> @slot.container_class}>
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex items-start gap-3">
+          <span class={"mt-1 h-2.5 w-2.5 rounded-full " <> @slot.dot_class}></span>
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {@slot.role_label}
+            </p>
+            <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">{@slot.title}</p>
+            <p class="text-xs text-slate-500 dark:text-slate-400">{@slot.description}</p>
+          </div>
+        </div>
+        <span class={"inline-flex items-center rounded-full px-2 py-1 text-xs font-medium " <> @slot.badge_class}>
+          {@slot.badge_text}
+        </span>
       </div>
-      <div class="text-xs text-slate-500">{@connection_state}</div>
     </div>
     """
   end
 
-  defp seat_status(nil, _color, _token), do: "loading"
+  defp seat_details(nil, color, _token) do
+    %{
+      role_label: color_label(color),
+      title: "Loading...",
+      description: "Checking seat status...",
+      container_class:
+        "border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60",
+      dot_class: "bg-slate-300",
+      badge_text: "Loading",
+      badge_class: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+    }
+  end
 
-  defp seat_status(game, color, token) do
+  defp seat_details(game, color, token) do
     case game.players[color] do
-      nil -> "open seat"
-      %{token: ^token} -> "you"
-      %{token: _} -> "taken"
+      nil ->
+        %{
+          role_label: color_label(color),
+          title: "Seat available",
+          description: "The #{color_label(color)} seat is open for a player.",
+          container_class:
+            "border border-dashed border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900/40",
+          dot_class: "border border-slate-300 bg-transparent",
+          badge_text: "Open",
+          badge_class: "bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200"
+        }
+
+      %{token: ^token, connected?: connected?} ->
+        %{
+          role_label: color_label(color),
+          title: "You",
+          description: "You are playing as #{color_label(color)}.",
+          container_class:
+            "border border-emerald-300 bg-emerald-50 dark:border-emerald-500/60 dark:bg-emerald-900/40 shadow-sm",
+          dot_class: "bg-emerald-500",
+          badge_text: if(connected?, do: "Connected", else: "Reconnecting"),
+          badge_class:
+            if connected? do
+              "bg-emerald-100 text-emerald-700 dark:bg-emerald-800 dark:text-emerald-100"
+            else
+              "bg-amber-100 text-amber-700 dark:bg-amber-800 dark:text-amber-100"
+            end
+        }
+
+      %{connected?: true} ->
+        %{
+          role_label: color_label(color),
+          title: "Opponent ready",
+          description: "An opponent is seated as #{color_label(color)}.",
+          container_class:
+            "border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60",
+          dot_class: "bg-emerald-400",
+          badge_text: "Online",
+          badge_class: "bg-emerald-100 text-emerald-700 dark:bg-emerald-800 dark:text-emerald-100"
+        }
+
+      %{connected?: false} ->
+        %{
+          role_label: color_label(color),
+          title: "Opponent disconnected",
+          description: "The #{color_label(color)} player is reconnecting.",
+          container_class:
+            "border border-amber-200 bg-amber-50/80 dark:border-amber-500/50 dark:bg-amber-900/30",
+          dot_class: "bg-amber-400",
+          badge_text: "Offline",
+          badge_class: "bg-amber-100 text-amber-700 dark:bg-amber-800 dark:text-amber-100"
+        }
     end
   end
 
-  defp connection_state(nil, _color), do: "--"
-
-  defp connection_state(game, color) do
-    case game.players[color] do
-      nil -> "open"
-      %{connected?: true} -> "connected"
-      _ -> "offline"
-    end
+  defp color_label(color) do
+    color
+    |> Atom.to_string()
+    |> String.capitalize()
   end
 end

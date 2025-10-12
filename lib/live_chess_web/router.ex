@@ -8,7 +8,6 @@ defmodule LiveChessWeb.Router do
     plug :put_root_layout, html: {LiveChessWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
-    plug :ensure_player_token
   end
 
   pipeline :api do
@@ -43,17 +42,6 @@ defmodule LiveChessWeb.Router do
 
       live_dashboard "/dashboard", metrics: LiveChessWeb.Telemetry
       forward "/mailbox", Plug.Swoosh.MailboxPreview
-    end
-  end
-
-  defp ensure_player_token(conn, _opts) do
-    case get_session(conn, :player_token) do
-      nil ->
-        token = LiveChess.Games.generate_player_token()
-        put_session(conn, :player_token, token)
-
-      _ ->
-        conn
     end
   end
 end

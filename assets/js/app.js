@@ -43,9 +43,138 @@ if (!tabToken) {
   sessionStorage.setItem(tabStorageKey, tabToken);
 }
 
+const copyToClipboard = async (text) => {
+  if (!text) return false;
+
+  try {
+    if (
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_error) {
+    // Continue to fallback strategy.
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+
+    const selection = document.getSelection();
+    const selectedRange =
+      selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+
+    const successful = document.execCommand("copy");
+
+    document.body.removeChild(textarea);
+
+    if (selectedRange && selection) {
+      selection.removeAllRanges();
+      selection.addRange(selectedRange);
+    }
+
+    return successful;
+  } catch (_fallbackError) {
+    return false;
+  }
+};
+
+const Hooks = {
+  CopyShareLink: {
+    mounted() {
+      this.inputEl = this.el.querySelector("[data-share-input]");
+      this.messageEl = this.el.querySelector("[data-copy-message]");
+      this.copyUrl = this.el.dataset.url || this.inputEl?.value || "";
+      this.successText =
+        this.el.dataset.successText || "Link copied to clipboard";
+      this.resetTimer = null;
+
+      if (!this.inputEl) return;
+
+      if (this.messageEl) {
+        this.messageEl.setAttribute("aria-hidden", "true");
+      }
+
+      this.handleCopy = async (event) => {
+        event.preventDefault();
+        this.copyUrl =
+          this.el.dataset.url || this.inputEl.value || this.copyUrl;
+
+        if (!this.copyUrl) return;
+
+        const didCopy = await copyToClipboard(this.copyUrl);
+
+        if (!didCopy) {
+          if (
+            typeof window !== "undefined" &&
+            typeof window.prompt === "function"
+          ) {
+            window.prompt("Copy this link", this.copyUrl);
+          }
+          return;
+        }
+
+        this.clearSelection();
+        this.showMessage();
+      };
+
+      this.inputEl.addEventListener("click", this.handleCopy);
+    },
+    updated() {
+      this.copyUrl = this.el.dataset.url || this.inputEl?.value || this.copyUrl;
+    },
+    destroyed() {
+      if (this.inputEl && this.handleCopy) {
+        this.inputEl.removeEventListener("click", this.handleCopy);
+      }
+      if (this.resetTimer) {
+        clearTimeout(this.resetTimer);
+        this.resetTimer = null;
+      }
+    },
+    showMessage() {
+      if (!this.messageEl) return;
+
+      this.messageEl.textContent = this.successText;
+      this.messageEl.classList.remove("hidden");
+      this.messageEl.setAttribute("aria-hidden", "false");
+
+      if (this.resetTimer) {
+        clearTimeout(this.resetTimer);
+      }
+
+      this.resetTimer = setTimeout(() => {
+        this.messageEl.classList.add("hidden");
+        this.messageEl.setAttribute("aria-hidden", "true");
+      }, 2000);
+    },
+    clearSelection() {
+      if (typeof window === "undefined") return;
+      if (typeof this.inputEl?.blur === "function") {
+        this.inputEl.blur();
+      }
+      const selection = window.getSelection ? window.getSelection() : null;
+      if (selection && typeof selection.removeAllRanges === "function") {
+        selection.removeAllRanges();
+      }
+    },
+  },
+};
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: { _csrf_token: csrfToken, player_token: tabToken },
+  hooks: Hooks,
 });
 
 // Show progress bar on live navigation and form submits

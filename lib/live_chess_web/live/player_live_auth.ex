@@ -5,10 +5,8 @@ defmodule LiveChessWeb.PlayerLiveAuth do
   alias Phoenix.LiveView
   alias Phoenix.LiveView.Socket
 
-  def on_mount(:default, _params, session, %Socket{} = socket) do
-    base_token = session["player_token"] || LiveChess.Games.generate_player_token()
-
-    active_token =
+  def on_mount(:default, _params, _session, %Socket{} = socket) do
+    token =
       if LiveView.connected?(socket) do
         socket
         |> LiveView.get_connect_params()
@@ -17,12 +15,12 @@ defmodule LiveChessWeb.PlayerLiveAuth do
             tab_token
 
           _ ->
-            base_token
+            LiveChess.Games.generate_player_token()
         end
       else
-        base_token
+        nil
       end
 
-    {:cont, Component.assign(socket, :player_token, active_token)}
+    {:cont, Component.assign(socket, :player_token, token)}
   end
 end
