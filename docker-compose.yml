@@ -1,0 +1,35 @@
+version: "3.8"
+
+services:
+  live_chess:
+    image: index.docker.io/dimamik/live_chess${SYSTEM_TAG}
+    container_name: live_chess
+    restart: always
+    networks:
+      - nginx_network
+    expose:
+      - "4000"
+    env_file:
+      - .env
+    environment:
+      - PHX_HOST=${PHX_HOST?err}
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE?err}
+      - PORT=${PORT:-4000}
+      - ERL_AFLAGS=-proto_dist inet6_tcp
+    labels:
+      - "com.centurylinklabs.watchtower.scope=live_chess"
+
+  live_chess_watchtower:
+    image: containrrr/watchtower
+    container_name: live_chess_watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - $HOME/.docker/config.json:/config.json
+    command: --interval 300 --cleanup live_chess --scope live_chess
+    depends_on:
+      - live_chess
+    restart: unless-stopped
+
+networks:
+  nginx_network:
+    external: true
