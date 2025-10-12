@@ -95,6 +95,14 @@ defmodule LiveChessWeb.GameLive do
          |> assign(:selected_square, nil)
          |> assign(:available_moves, MapSet.new())}
 
+      piece_for(socket.assigns.game, square) |> owns_piece?(socket.assigns.role) ->
+        moves = fetch_moves(socket, square)
+
+        {:noreply,
+         socket
+         |> assign(:selected_square, square)
+         |> assign(:available_moves, MapSet.new(moves))}
+
       true ->
         attempt_move(socket, socket.assigns.selected_square, square)
     end
@@ -185,6 +193,9 @@ defmodule LiveChessWeb.GameLive do
     |> List.flatten()
     |> Enum.find_value(fn cell -> if cell.id == square, do: cell.piece end)
   end
+
+  defp owns_piece?(nil, _role), do: false
+  defp owns_piece?(%{color: color}, role), do: color == role
 
   defp active_player?(socket) do
     socket.assigns.role in [:white, :black] and
