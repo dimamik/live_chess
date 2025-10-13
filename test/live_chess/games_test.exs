@@ -3,6 +3,12 @@ defmodule LiveChess.GamesTest do
 
   alias LiveChess.Games
 
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(LiveChess.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(LiveChess.Repo, {:shared, self()})
+    :ok
+  end
+
   describe "in-memory game flow" do
     test "players can create, join, and make moves" do
       host_token = Games.generate_player_token()
@@ -12,10 +18,19 @@ defmodule LiveChess.GamesTest do
       assert state.players.white.token == host_token
       assert state.status == :waiting
 
+      assert %{
+               display_score: _,
+               white_percentage: percent,
+               advantage: _
+             } = state.evaluation
+
+      assert is_number(percent)
+
       guest_token = Games.generate_player_token()
       assert {:ok, %{role: :black}} = Games.join_game(room_id, guest_token)
       assert {:ok, %{state: state_after_join}} = Games.connect(room_id, guest_token)
       assert state_after_join.status == :active
+      assert is_map(state_after_join.evaluation)
 
       assert {:ok, %{state: move_state}} = Games.make_move(room_id, host_token, "e2", "e4")
       assert move_state.history == ["e2-e4"]

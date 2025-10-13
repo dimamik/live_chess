@@ -8,7 +8,9 @@
 import Config
 
 config :live_chess,
-  generators: [timestamp_type: :utc_datetime]
+  ecto_repos: [LiveChess.Repo],
+  generators: [timestamp_type: :utc_datetime],
+  enable_game_restorer: true
 
 # Configures the endpoint
 config :live_chess, LiveChessWeb.Endpoint,

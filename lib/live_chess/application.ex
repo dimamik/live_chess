@@ -7,17 +7,29 @@ defmodule LiveChess.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      LiveChessWeb.Telemetry,
-      {DNSCluster, query: Application.get_env(:live_chess, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: LiveChess.PubSub},
-      {Registry, keys: :unique, name: LiveChess.GameRegistry},
-      LiveChess.GameSupervisor,
-      # Start a worker by calling: LiveChess.Worker.start_link(arg)
-      # {LiveChess.Worker, arg},
-      # Start to serve requests, typically the last entry
-      LiveChessWeb.Endpoint
-    ]
+    restorer_child =
+      if Application.get_env(:live_chess, :enable_game_restorer, true) do
+        [LiveChess.GameRestorer]
+      else
+        []
+      end
+
+    children =
+      [
+        LiveChessWeb.Telemetry,
+        LiveChess.Repo,
+        {DNSCluster, query: Application.get_env(:live_chess, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: LiveChess.PubSub},
+        {Registry, keys: :unique, name: LiveChess.GameRegistry},
+        LiveChess.GameSupervisor
+      ] ++
+        restorer_child ++
+        [
+          # Start a worker by calling: LiveChess.Worker.start_link(arg)
+          # {LiveChess.Worker, arg},
+          # Start to serve requests, typically the last entry
+          LiveChessWeb.Endpoint
+        ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

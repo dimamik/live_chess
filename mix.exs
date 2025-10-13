@@ -20,7 +20,7 @@ defmodule LiveChess.MixProject do
   def application do
     [
       mod: {LiveChess.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      extra_applications: [:logger, :runtime_tools, :ecto_sql]
     ]
   end
 
@@ -57,7 +57,9 @@ defmodule LiveChess.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.1.1"},
       {:bandit, "~> 1.5"},
-      {:chess, "~> 0.4.3"}
+      {:chess, "~> 0.4.3"},
+      {:ecto_sql, "~> 3.11"},
+      {:postgrex, "~> 0.17"}
     ]
   end
 
@@ -69,7 +71,9 @@ defmodule LiveChess.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      setup: ["deps.get", "assets.setup", "assets.build"],
+      setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
+      "ecto.setup": ["ecto.create", "ecto.migrate"],
+      "ecto.reset": ["ecto.drop", "ecto.setup"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["tailwind live_chess", "esbuild live_chess"],
       "assets.deploy": [

@@ -4,6 +4,7 @@ defmodule LiveChess.Games do
   """
 
   alias LiveChess.{GameServer, GameSupervisor}
+  alias LiveChess.Games.Storage
 
   @room_length 6
 
@@ -45,6 +46,10 @@ defmodule LiveChess.Games do
     with_server(room_id, fn -> GameServer.make_move(room_id, token, from, to, promotion) end)
   end
 
+  def resign(room_id, token) do
+    with_server(room_id, fn -> GameServer.resign(room_id, token) end)
+  end
+
   def game_state(room_id) do
     with_server(room_id, fn -> GameServer.get_state(room_id) end)
   end
@@ -71,8 +76,20 @@ defmodule LiveChess.Games do
 
   defp with_server(room_id, fun) do
     case Registry.lookup(LiveChess.GameRegistry, room_id) do
-      [] -> {:error, :not_found}
-      _ -> fun.()
+      [] ->
+        if Storage.exists?(room_id) do
+          case GameSupervisor.start_game(room_id) do
+            {:ok, pid} when is_pid(pid) -> fun.()
+            {:ok, :already_started} -> fun.()
+            {:error, {:already_started, _pid}} -> fun.()
+            _ -> {:error, :not_found}
+          end
+        else
+          {:error, :not_found}
+        end
+
+      _ ->
+        fun.()
     end
   end
 end

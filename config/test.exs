@@ -1,5 +1,16 @@
 import Config
 
+# Configure your database for tests
+config :live_chess, LiveChess.Repo,
+  username: "postgres",
+  password: "postgres",
+  hostname: "localhost",
+  database: "live_chess_test#{System.get_env("MIX_TEST_PARTITION")}",
+  pool: Ecto.Adapters.SQL.Sandbox,
+  pool_size: 10
+
+config :live_chess, enable_game_restorer: false
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :live_chess, LiveChessWeb.Endpoint,

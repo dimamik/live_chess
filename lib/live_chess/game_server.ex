@@ -4,6 +4,8 @@ defmodule LiveChess.GameServer do
   use GenServer
 
   alias Chess.Game, as: ChessGame
+  alias LiveChess.Analysis.Evaluator
+  alias LiveChess.Games.Storage
 
   @type room_id :: String.t()
   @type player_token :: String.t()
@@ -38,6 +40,10 @@ defmodule LiveChess.GameServer do
     GenServer.call(via(room_id), {:move, player_token, from, to, promotion})
   end
 
+  def resign(room_id, player_token) do
+    GenServer.call(via(room_id), {:resign, player_token})
+  end
+
   def leave(room_id, player_token) do
     GenServer.cast(via(room_id), {:leave, player_token})
   end
@@ -50,23 +56,18 @@ defmodule LiveChess.GameServer do
 
   @impl true
   def init(room_id) do
-    {:ok,
-     %{
-       room_id: room_id,
-       game: ChessGame.new(),
-       players: %{
-         white: nil,
-         black: nil
-       },
-       spectators: MapSet.new(),
-       status: :waiting,
-       last_move: nil
-     }}
+    state =
+      case Storage.fetch_state(room_id) do
+        {:ok, stored_state} -> hydrate_state(stored_state, room_id)
+        :error -> new_state(room_id)
+      end
+
+    {:ok, state}
   end
 
   @impl true
   def handle_call({:create, token}, _from, state) do
-    color = random_color()
+    color = first_available_color(state)
 
     with {:ok, state} <- ensure_slot(state, token, color) do
       broadcast(state)
@@ -160,6 +161,26 @@ defmodule LiveChess.GameServer do
     end
   end
 
+  def handle_call({:resign, token}, _from, state) do
+    with {:player, color} <- player_role(state, token),
+         true <- game_active?(state) do
+      winner = opponent_color(color)
+
+      updated =
+        state
+        |> Map.put(:status, :resigned)
+        |> Map.put(:winner, winner)
+        |> Map.put(:last_move, %{action: :resigned, color: color})
+
+      broadcast(updated)
+      {:reply, {:ok, payload(updated, token, color)}, updated}
+    else
+      :spectator -> {:reply, {:error, :not_authorized}, state}
+      false -> {:reply, {:error, :game_not_active}, state}
+      {:player, _} -> {:reply, {:error, :game_not_active}, state}
+    end
+  end
+
   def handle_call(:state, _from, state) do
     {:reply, serialize(state), state}
   end
@@ -217,7 +238,7 @@ defmodule LiveChess.GameServer do
 
   defp maybe_activate(state) do
     if state.players.white && state.players.black do
-      updated = %{state | status: :active}
+      updated = %{state | status: :active, winner: nil}
       broadcast(updated)
       updated
     else
@@ -227,11 +248,13 @@ defmodule LiveChess.GameServer do
   end
 
   defp maybe_finish(state, %ChessGame{status: status}) when status in [:playing, :check] do
-    Map.put(state, :status, :active)
+    state
+    |> Map.put(:status, :active)
+    |> Map.put(:winner, nil)
   end
 
   defp maybe_finish(state, %ChessGame{status: status}) do
-    %{state | status: status}
+    %{state | status: status, winner: Map.get(state, :winner)}
   end
 
   defp validate_turn(%{game: %ChessGame{current_fen: fen}}, color) do
@@ -302,6 +325,8 @@ defmodule LiveChess.GameServer do
   end
 
   defp broadcast(state) do
+    _ = Storage.persist_state(state)
+
     Phoenix.PubSub.broadcast(
       LiveChess.PubSub,
       topic(state.room_id),
@@ -335,11 +360,14 @@ defmodule LiveChess.GameServer do
       end
 
     winner =
-      case {state.status, checking_color} do
-        {:completed, :white} -> :white
-        {:completed, :black} -> :black
-        _ -> nil
-      end
+      Map.get(state, :winner) ||
+        case {state.status, checking_color} do
+          {:completed, :white} -> :white
+          {:completed, :black} -> :black
+          _ -> nil
+        end
+
+    evaluation = Evaluator.summary(state, winner)
 
     %{
       room_id: state.room_id,
@@ -351,7 +379,8 @@ defmodule LiveChess.GameServer do
       last_move: state.last_move,
       board: LiveChess.Games.Board.from_game(state.game),
       turn: current_turn(state.game.current_fen),
-      history: Enum.reverse(Enum.map(state.game.history, fn entry -> entry.move end))
+      history: Enum.reverse(Enum.map(state.game.history, fn entry -> entry.move end)),
+      evaluation: evaluation
     }
   end
 
@@ -368,13 +397,45 @@ defmodule LiveChess.GameServer do
     %{token: token, connected?: connected?}
   end
 
-  defp random_color do
-    Enum.random([:white, :black])
+  defp first_available_color(state) do
+    cond do
+      is_nil(state.players.white) -> :white
+      is_nil(state.players.black) -> :black
+      true -> Enum.random([:white, :black])
+    end
   end
 
   defp player?(state, token) do
     Enum.any?([:white, :black], fn color -> match?(%{token: ^token}, state.players[color]) end)
   end
+
+  defp new_state(room_id) do
+    %{
+      room_id: room_id,
+      game: ChessGame.new(),
+      players: %{
+        white: nil,
+        black: nil
+      },
+      spectators: MapSet.new(),
+      status: :waiting,
+      last_move: nil,
+      winner: nil
+    }
+  end
+
+  defp hydrate_state(state, room_id) when is_map(state) do
+    state
+    |> Map.put(:room_id, room_id)
+    |> Map.update(:spectators, MapSet.new(), fn
+      %MapSet{} = set -> set
+      other when is_list(other) -> MapSet.new(other)
+      _ -> MapSet.new()
+    end)
+    |> Map.put_new(:winner, nil)
+  end
+
+  defp hydrate_state(_state, room_id), do: new_state(room_id)
 
   defp color_for(state, token) do
     cond do
@@ -391,6 +452,16 @@ defmodule LiveChess.GameServer do
       true -> :spectator
     end
   end
+
+  defp game_active?(%{status: status}) do
+    status in [:active]
+  end
+
+  defp game_active?(_), do: false
+
+  defp opponent_color(:white), do: :black
+  defp opponent_color(:black), do: :white
+  defp opponent_color(_), do: nil
 
   defp topic(room_id), do: "game:" <> room_id
 

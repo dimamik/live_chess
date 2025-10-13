@@ -17,6 +17,9 @@ defmodule LiveChessWeb.ConnCase do
 
   use ExUnit.CaseTemplate
 
+  alias LiveChess.Repo
+  alias Ecto.Adapters.SQL.Sandbox
+
   using do
     quote do
       # The default endpoint for testing
@@ -31,7 +34,13 @@ defmodule LiveChessWeb.ConnCase do
     end
   end
 
-  setup _tags do
+  setup tags do
+    :ok = Sandbox.checkout(Repo)
+
+    unless tags[:async] do
+      Sandbox.mode(Repo, {:shared, self()})
+    end
+
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
 end

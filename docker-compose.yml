@@ -1,21 +1,32 @@
 version: "3.8"
 
 services:
+  live_chess_postgres:
+    image: pgvector/pgvector:pg17
+    container_name: live_chess_postgres
+    restart: always
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+    networks:
+      - nginx_network
+    expose:
+      - 5432
+    volumes:
+      - db:/var/lib/postgresql/data
   live_chess:
     image: index.docker.io/dimamik/live_chess${SYSTEM_TAG}
     container_name: live_chess
     restart: always
     networks:
       - nginx_network
+    depends_on:
+      - live_chess_postgres
     expose:
       - "4000"
     env_file:
       - .env
-    environment:
-      - PHX_HOST=${PHX_HOST?err}
-      - SECRET_KEY_BASE=${SECRET_KEY_BASE?err}
-      - PORT=${PORT:-4000}
-      - ERL_AFLAGS=-proto_dist inet6_tcp
     labels:
       - "com.centurylinklabs.watchtower.scope=live_chess"
 
@@ -33,3 +44,7 @@ services:
 networks:
   nginx_network:
     external: true
+
+volumes:
+  db:
+    driver: local

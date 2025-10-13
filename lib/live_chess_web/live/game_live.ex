@@ -15,6 +15,7 @@ defmodule LiveChessWeb.GameLive do
       |> assign(:game, nil)
       |> assign(:share_url, build_share_url(room_id))
       |> assign(:player_token, socket.assigns.player_token)
+      |> assign(:board_ready?, false)
       |> assign(:show_leave_modal, false)
       |> assign(:page_title, "LiveView Chess")
 
@@ -27,6 +28,7 @@ defmodule LiveChessWeb.GameLive do
             socket
             |> assign(:role, role)
             |> assign(:game, state)
+            |> assign(:board_ready?, true)
 
           {:ok, maybe_auto_join(socket, state)}
 
@@ -57,7 +59,12 @@ defmodule LiveChessWeb.GameLive do
            |> push_navigate(to: ~p"/")}
 
         state when is_map(state) ->
-          role = infer_role_from_state(state, socket.assigns.player_token) || socket.assigns.role
+          role =
+            determine_initial_role(
+              state,
+              socket.assigns.player_token,
+              socket.assigns.role
+            )
 
           {:ok,
            socket
@@ -105,6 +112,32 @@ defmodule LiveChessWeb.GameLive do
      socket
      |> assign(:show_leave_modal, false)
      |> push_navigate(to: ~p"/")}
+  end
+
+  def handle_event("surrender", _params, socket) do
+    if show_surrender_button?(socket.assigns.role, socket.assigns.game) do
+      case Games.resign(socket.assigns.room_id, socket.assigns.player_token) do
+        {:ok, %{state: state}} ->
+          {:noreply,
+           socket
+           |> assign(:game, state)
+           |> assign(:error_message, nil)}
+
+        {:error, :game_not_active} ->
+          {:noreply, assign(socket, :error_message, "The game is no longer active.")}
+
+        {:error, :not_authorized} ->
+          {:noreply, assign(socket, :error_message, "Only seated players can surrender.")}
+
+        {:error, message} when is_binary(message) ->
+          {:noreply, assign(socket, :error_message, message)}
+
+        {:error, _reason} ->
+          {:noreply, assign(socket, :error_message, "Unable to surrender right now.")}
+      end
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("select_square", %{"square" => square}, socket) do
@@ -270,13 +303,19 @@ defmodule LiveChessWeb.GameLive do
     end
   end
 
+  defp available_seat(_), do: nil
+
+  defp determine_initial_role(state, token, fallback) do
+    infer_role_from_state(state, token) || available_seat(state) || fallback
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
     <div id="game-surface" phx-hook="SoundEffects" class="mx-auto max-w-6xl px-4 py-8">
       <div class="flex flex-col gap-6 lg:flex-row">
         <div class="flex-1">
-          <%= if @game do %>
+          <%= if @board_ready? and @game do %>
             <div class="chess-board-panel">
               <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div class="flex flex-wrap items-center gap-3">
@@ -291,6 +330,15 @@ defmodule LiveChessWeb.GameLive do
                     <span class="hidden sm:inline">Back to lobby</span>
                     <span class="sm:hidden">Lobby</span>
                   </button>
+                  <%= if show_surrender_button?(@role, @game) do %>
+                    <button
+                      type="button"
+                      phx-click="surrender"
+                      class="inline-flex items-center gap-2 rounded-full border border-rose-300 px-3 py-1 text-sm font-medium text-rose-600 transition hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 dark:border-rose-500/60 dark:text-rose-200 dark:hover:bg-rose-900/30 dark:focus:ring-rose-400/70"
+                    >
+                      Surrender
+                    </button>
+                  <% end %>
                 </div>
                 <.turn_indicator game={@game} player_token={@player_token} />
               </div>
@@ -376,6 +424,11 @@ defmodule LiveChessWeb.GameLive do
           </div>
 
           <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Advantage</h3>
+            <.evaluation_panel evaluation={@game && Map.get(@game, :evaluation)} />
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Moves</h3>
             <div class="mt-2 max-h-80 space-y-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
               <%= if @game && @game.history != [] do %>
@@ -441,6 +494,68 @@ defmodule LiveChessWeb.GameLive do
     """
   end
 
+  attr :evaluation, :any, default: nil
+
+  def evaluation_panel(%{evaluation: nil} = assigns) do
+    ~H"""
+    <div class="mt-2 flex h-20 items-center justify-center">
+      <div class="h-3/5 w-full max-w-xs animate-pulse rounded-full bg-slate-200 dark:bg-slate-700" />
+    </div>
+    """
+  end
+
+  def evaluation_panel(assigns) do
+    white_pct = assigns.evaluation.white_percentage
+    black_pct = max(0.0, 100.0 - white_pct)
+
+    assigns =
+      assigns
+      |> assign(:white_pct, white_pct)
+      |> assign(:white_pct_display, format_percentage(white_pct))
+      |> assign(:black_pct_display, format_percentage(black_pct))
+
+    ~H"""
+    <div class="space-y-3">
+      <div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        <span class="text-left text-slate-700 dark:text-slate-200">White {@white_pct_display}%</span>
+        <span class={"text-sm font-semibold " <> score_text_class(@evaluation)}>
+          {@evaluation.display_score}
+        </span>
+        <span class="text-right text-slate-700 dark:text-slate-200">Black {@black_pct_display}%</span>
+      </div>
+      <div class="relative h-4 w-full overflow-hidden rounded-full border border-slate-300 bg-slate-900 shadow-inner dark:border-slate-600 dark:bg-slate-800">
+        <div
+          class="absolute inset-y-0 left-0 bg-emerald-400 transition-all duration-500 ease-in-out dark:bg-emerald-500/80"
+          style={"width: #{@white_pct}%"}
+        />
+      </div>
+      <p class="text-center text-xs text-slate-600 dark:text-slate-400">
+        {evaluation_caption(@evaluation)}
+      </p>
+    </div>
+    """
+  end
+
+  defp evaluation_caption(%{advantage: :white, display_score: score}),
+    do: "White is better (#{score})"
+
+  defp evaluation_caption(%{advantage: :black, display_score: score}),
+    do: "Black is better (#{score})"
+
+  defp evaluation_caption(%{display_score: score}), do: "Even position (#{score})"
+
+  defp format_percentage(value) when is_number(value) do
+    value
+    |> Float.round(1)
+    |> :erlang.float_to_binary([{:decimals, 1}])
+  end
+
+  defp format_percentage(_), do: "0.0"
+
+  defp score_text_class(%{advantage: :white}), do: "text-emerald-500"
+  defp score_text_class(%{advantage: :black}), do: "text-slate-500 dark:text-slate-300"
+  defp score_text_class(_), do: "text-slate-500 dark:text-slate-300"
+
   defp status_line(%{status: :waiting}), do: "Waiting for an opponent..."
 
   defp status_line(%{status: :active, in_check: color}) when color in [:white, :black] do
@@ -450,6 +565,14 @@ defmodule LiveChessWeb.GameLive do
   defp status_line(%{status: status}) when status in [:active, :playing], do: "Game in progress"
   defp status_line(%{status: :completed, winner: :white}), do: "Checkmate! White wins 🎉"
   defp status_line(%{status: :completed, winner: :black}), do: "Checkmate! Black wins 🎉"
+
+  defp status_line(%{status: :resigned, last_move: %{action: :resigned, color: color}}) do
+    "#{color_label(color)} surrendered. #{opponent_label(color)} wins."
+  end
+
+  defp status_line(%{status: :resigned, winner: winner}) when winner in [:white, :black] do
+    "Game ended by resignation. #{color_label(winner)} claims the win."
+  end
 
   defp status_line(%{status: status}) do
     "Game finished (#{format_status(status)})"
@@ -478,6 +601,9 @@ defmodule LiveChessWeb.GameLive do
   defp status_classes(%{status: :completed, winner: :black}),
     do: "text-emerald-700 dark:text-emerald-300 font-semibold"
 
+  defp status_classes(%{status: :resigned}),
+    do: "text-rose-600 dark:text-rose-300 font-semibold"
+
   defp status_classes(_), do: "text-slate-700 dark:text-slate-200"
 
   defp human_turn(:white), do: "White"
@@ -490,7 +616,7 @@ defmodule LiveChessWeb.GameLive do
         "chess-square",
         if(cell.light?, do: "chess-square-light", else: "chess-square-dark"),
         if(selected == cell.id, do: "chess-square-active", else: nil),
-        if(last_move && cell.id in [last_move.from, last_move.to],
+        if(highlight_last_move?(last_move, cell.id),
           do: "chess-square-last-move",
           else: nil
         ),
@@ -503,6 +629,13 @@ defmodule LiveChessWeb.GameLive do
 
     Enum.reject(base, &is_nil/1)
   end
+
+  defp highlight_last_move?(%{from: from, to: to}, square)
+       when is_binary(from) and is_binary(to) do
+    square in [from, to]
+  end
+
+  defp highlight_last_move?(_last_move, _square), do: false
 
   defp clickable?(role, %{piece: %{color: color}}) when role == color, do: true
   defp clickable?(_role, _cell), do: false
@@ -604,6 +737,12 @@ defmodule LiveChessWeb.GameLive do
       _ -> []
     end
   end
+
+  defp show_surrender_button?(_role, nil), do: false
+
+  defp show_surrender_button?(role, %{status: :active}) when role in [:white, :black], do: true
+
+  defp show_surrender_button?(_, _), do: false
 
   defp show_move_dot?(available_moves, %{id: id, piece: nil}, _role) do
     available_moves && MapSet.member?(available_moves, id)
@@ -910,15 +1049,33 @@ defmodule LiveChessWeb.GameLive do
     active_color = Map.get(game, :turn) || :white
     active_label = color_label(active_color)
     active_player = Map.get(players, active_color)
+    viewer_color = color_for_token(game, player_token)
+    spectator? = viewer_color not in [:white, :black]
 
     cond do
-      active_player && player_token && active_player.token == player_token ->
+      active_player && not spectator? && player_token && active_player.token == player_token ->
         %{
           class:
             "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-100 ring-1 ring-inset ring-emerald-300/70",
           dot_class: "bg-emerald-500 animate-pulse",
           label: "Your move",
           sublabel: "#{active_label} pieces"
+        }
+
+      spectator? && active_player && active_player.connected? ->
+        %{
+          class: "bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-100",
+          dot_class: "bg-sky-400 animate-pulse",
+          label: "#{active_label} to move",
+          sublabel: "Spectating · #{opponent_label(active_color)} waits"
+        }
+
+      spectator? && active_player ->
+        %{
+          class: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-100",
+          dot_class: "bg-amber-400 animate-pulse",
+          label: "#{active_label} to move",
+          sublabel: "Spectating · #{opponent_label(active_color)} reconnecting"
         }
 
       active_player && active_player.connected? ->
@@ -935,6 +1092,14 @@ defmodule LiveChessWeb.GameLive do
           dot_class: "bg-amber-400 animate-pulse",
           label: "#{active_label} to move",
           sublabel: "Opponent reconnecting"
+        }
+
+      spectator? ->
+        %{
+          class: "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-100",
+          dot_class: "bg-slate-400",
+          label: "Spectating",
+          sublabel: "Waiting for players to join"
         }
 
       true ->
