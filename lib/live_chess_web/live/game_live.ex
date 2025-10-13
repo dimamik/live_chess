@@ -5,6 +5,19 @@ defmodule LiveChessWeb.GameLive do
   alias LiveChess.Games
   alias LiveChess.Games.Notation
 
+  @finished_statuses [
+    :completed,
+    :checkmate,
+    :stalemate,
+    :draw,
+    :insufficient_material,
+    :threefold_repetition,
+    :fifty_move_rule,
+    :timeout,
+    :resigned,
+    :abandoned
+  ]
+
   @impl true
   def mount(%{"room_id" => room_id}, _session, socket) do
     socket =
@@ -28,6 +41,7 @@ defmodule LiveChessWeb.GameLive do
       |> assign(:history_entries, [])
       |> assign(:history_pairs, [])
       |> assign(:history_selected_ply, nil)
+      |> assign(:endgame_overlay_dismissed, false)
       |> assign(:page_title, "LiveView Chess")
 
     if connected?(socket) do
@@ -194,6 +208,9 @@ defmodule LiveChessWeb.GameLive do
 
   def handle_event("escape_press", _params, socket) do
     cond do
+      overlay_active?(socket) ->
+        {:noreply, assign(socket, :endgame_overlay_dismissed, true)}
+
       socket.assigns[:show_surrender_modal] ->
         {:noreply, assign(socket, :show_surrender_modal, false)}
 
@@ -206,6 +223,14 @@ defmodule LiveChessWeb.GameLive do
       true ->
         {:noreply, socket}
     end
+  end
+
+  def handle_event("dismiss_endgame_overlay", _params, socket) do
+    {:noreply, assign(socket, :endgame_overlay_dismissed, true)}
+  end
+
+  def handle_event("noop", _params, socket) do
+    {:noreply, socket}
   end
 
   def handle_event("select_square", %{"square" => square}, socket) do
@@ -339,6 +364,7 @@ defmodule LiveChessWeb.GameLive do
   defp build_share_url(room_id), do: to_string(url(~p"/game/#{room_id}"))
 
   defp set_game_state(socket, state) when is_map(state) do
+    previous_game = socket.assigns[:game]
     previous_cursor = socket.assigns[:history_cursor]
     previous_length = socket.assigns[:history_length] || 0
     new_length = history_length(state)
@@ -369,6 +395,7 @@ defmodule LiveChessWeb.GameLive do
     |> assign(:history_entries, history.entries)
     |> assign(:history_pairs, history.pairs)
     |> assign(:history_selected_ply, history.selected_ply)
+    |> maybe_reset_endgame_overlay(previous_game, state)
   end
 
   defp set_game_state(socket, _state), do: socket
@@ -642,6 +669,36 @@ defmodule LiveChessWeb.GameLive do
 
   defp viewing_live?(_cursor, _length), do: true
 
+  defp maybe_reset_endgame_overlay(socket, previous_game, new_game) do
+    prev_status = previous_game && Map.get(previous_game, :status)
+    new_status = Map.get(new_game, :status)
+
+    cond do
+      finished_status?(new_status) and new_status != prev_status ->
+        assign(socket, :endgame_overlay_dismissed, false)
+
+      finished_status?(new_status) ->
+        socket
+
+      true ->
+        assign(socket, :endgame_overlay_dismissed, false)
+    end
+  end
+
+  defp overlay_active?(%{assigns: assigns}) do
+    dismissed? = Map.get(assigns, :endgame_overlay_dismissed, false)
+
+    if dismissed? do
+      false
+    else
+      game = Map.get(assigns, :game)
+      role = Map.get(assigns, :role)
+      not is_nil(build_endgame_overlay(game, role))
+    end
+  end
+
+  defp overlay_active?(_socket), do: false
+
   defp maybe_track_spectator(socket, role, state) do
     cond do
       role == :spectator and socket.assigns[:player_token] ->
@@ -680,14 +737,10 @@ defmodule LiveChessWeb.GameLive do
     end
   end
 
-  defp available_seat(%{players: players}) do
-    cond do
-      players.black == nil -> :black
-      players.white == nil -> :white
-      true -> nil
-    end
-  end
+  defp available_seat(%{players: %{white: nil, black: nil}}), do: Enum.random([:white, :black])
 
+  defp available_seat(%{players: %{white: nil}}), do: :white
+  defp available_seat(%{players: %{black: nil}}), do: :black
   defp available_seat(_), do: nil
 
   defp determine_initial_role(state, token, fallback) do
@@ -901,8 +954,10 @@ defmodule LiveChessWeb.GameLive do
           <% end %>
         </div>
       </div>
-      <%= if overlay = build_endgame_overlay(@game, @role) do %>
-        <.endgame_overlay overlay={overlay} />
+      <%= if not @endgame_overlay_dismissed do %>
+        <%= if overlay = build_endgame_overlay(@game, @role) do %>
+          <.endgame_overlay overlay={overlay} />
+        <% end %>
       <% end %>
       <%= if @show_leave_modal do %>
         <div class="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm">
@@ -999,18 +1054,32 @@ defmodule LiveChessWeb.GameLive do
       |> assign(:overlay_class, overlay_class(Map.get(overlay, :type)))
       |> assign(:heading, Map.get(overlay, :heading, ""))
       |> assign(:subtext, Map.get(overlay, :subtext))
+      |> assign(:cta_label, Map.get(overlay, :cta_label, "Continue"))
       |> assign(:particles, Map.get(overlay, :particles, []))
 
     ~H"""
-    <div class={"endgame-overlay " <> @overlay_class} role="status" aria-live="assertive">
+    <div
+      class={"endgame-overlay " <> @overlay_class}
+      role="dialog"
+      aria-modal="true"
+      aria-live="assertive"
+      phx-click="dismiss_endgame_overlay"
+    >
       <%= for particle <- @particles do %>
         <span class={particle.class} style={particle.style}></span>
       <% end %>
-      <div class="endgame-overlay__content">
+      <div class="endgame-overlay__content" phx-click="noop" phx-stop>
         <p class="endgame-overlay__heading">{@heading}</p>
         <%= if @subtext do %>
           <p class="endgame-overlay__subtext">{@subtext}</p>
         <% end %>
+        <button
+          type="button"
+          class="endgame-overlay__cta"
+          phx-click="dismiss_endgame_overlay"
+        >
+          {@cta_label}
+        </button>
       </div>
     </div>
     """
@@ -1101,7 +1170,7 @@ defmodule LiveChessWeb.GameLive do
     winner = Map.get(game, :winner)
 
     cond do
-      status != :completed ->
+      not finished_status?(status) ->
         nil
 
       winner not in [:white, :black] ->
@@ -1114,21 +1183,23 @@ defmodule LiveChessWeb.GameLive do
 
         cond do
           winner == role ->
+            {heading, subtext} = winner_overlay_copy(status, opponent, opponent_color)
+
             %{
               type: :celebration,
-              heading: "Checkmate! 🎉",
-              subtext: "You defeated #{overlay_player_display(opponent, opponent_color)}.",
+              heading: heading,
+              subtext: subtext,
               particles: celebration_particles()
             }
 
           winner == opponent_color ->
             winner_player = Map.get(players, winner)
+            {heading, subtext} = loser_overlay_copy(status, winner_player, winner)
 
             %{
               type: :defeat,
-              heading: "Checkmated",
-              subtext:
-                "#{capitalize_phrase(overlay_player_display(winner_player, winner))} wins this game.",
+              heading: heading,
+              subtext: subtext,
               particles: defeat_particles()
             }
 
@@ -1136,6 +1207,58 @@ defmodule LiveChessWeb.GameLive do
             nil
         end
     end
+  end
+
+  defp winner_overlay_copy(:completed, opponent, opponent_color) do
+    {
+      "Checkmate! 🎉",
+      "You defeated #{overlay_player_display(opponent, opponent_color)}."
+    }
+  end
+
+  defp winner_overlay_copy(:resigned, opponent, opponent_color) do
+    opponent_display = capitalize_phrase(overlay_player_display(opponent, opponent_color))
+
+    {
+      "Victory by resignation",
+      "#{opponent_display} resigned. You take the win."
+    }
+  end
+
+  defp winner_overlay_copy(_status, opponent, opponent_color) do
+    opponent_display = capitalize_phrase(overlay_player_display(opponent, opponent_color))
+
+    {
+      "Victory! 🎉",
+      "You prevailed against #{opponent_display}."
+    }
+  end
+
+  defp loser_overlay_copy(:completed, winner_player, winner_color) do
+    winner_display = capitalize_phrase(overlay_player_display(winner_player, winner_color))
+
+    {
+      "Checkmated",
+      "#{winner_display} wins this game."
+    }
+  end
+
+  defp loser_overlay_copy(:resigned, winner_player, winner_color) do
+    winner_display = capitalize_phrase(overlay_player_display(winner_player, winner_color))
+
+    {
+      "Defeat by resignation",
+      "#{winner_display} claims the match after your resignation."
+    }
+  end
+
+  defp loser_overlay_copy(_status, winner_player, winner_color) do
+    winner_display = capitalize_phrase(overlay_player_display(winner_player, winner_color))
+
+    {
+      "Defeat",
+      "#{winner_display} wins the game."
+    }
   end
 
   defp overlay_class(:defeat), do: "endgame-overlay--defeat"
@@ -1156,7 +1279,20 @@ defmodule LiveChessWeb.GameLive do
       %{left: "32%", delay: "0.9s", duration: "3.7s", color: "#14b8a6"},
       %{left: "52%", delay: "0.65s", duration: "3.5s", color: "#f97316"},
       %{left: "72%", delay: "0.85s", duration: "3.4s", color: "#f87171"},
-      %{left: "92%", delay: "0.55s", duration: "3.6s", color: "#60a5fa"}
+      %{left: "92%", delay: "0.55s", duration: "3.6s", color: "#60a5fa"},
+      %{left: "5%", delay: "1s", duration: "4.1s", color: "#fca5a5"},
+      %{left: "15%", delay: "1.25s", duration: "3.8s", color: "#fcd34d"},
+      %{left: "25%", delay: "1.1s", duration: "4s", color: "#818cf8"},
+      %{left: "35%", delay: "1.4s", duration: "3.9s", color: "#22c55e"},
+      %{left: "45%", delay: "1.55s", duration: "3.7s", color: "#f472b6"},
+      %{left: "55%", delay: "1.2s", duration: "4.2s", color: "#38bdf8"},
+      %{left: "65%", delay: "1.45s", duration: "3.8s", color: "#fb7185"},
+      %{left: "75%", delay: "1.7s", duration: "4.1s", color: "#fbbf24"},
+      %{left: "85%", delay: "1.3s", duration: "3.9s", color: "#34d399"},
+      %{left: "95%", delay: "1.6s", duration: "3.7s", color: "#60a5fa"},
+      %{left: "50%", delay: "1.9s", duration: "4.3s", color: "#c084fc"},
+      %{left: "30%", delay: "2.1s", duration: "4s", color: "#fde047"},
+      %{left: "70%", delay: "2.25s", duration: "4.2s", color: "#38bdf8"}
     ]
     |> Enum.map(&confetti_particle/1)
   end
@@ -1281,12 +1417,8 @@ defmodule LiveChessWeb.GameLive do
 
   defp status_classes(_), do: "text-slate-700 dark:text-slate-200"
 
-  defp viewer_count_number(%{spectator_count: count}, role) when is_integer(count) do
-    cond do
-      role == :spectator and count > 0 -> max(count - 1, 0)
-      true -> max(count, 0)
-    end
-  end
+  defp viewer_count_number(%{spectator_count: count}, _role) when is_integer(count),
+    do: max(count, 0)
 
   defp viewer_count_number(_, _), do: 0
 
@@ -1797,24 +1929,12 @@ defmodule LiveChessWeb.GameLive do
 
   defp player_presence(_other, _color), do: nil
 
-  defp game_pending?(%{status: status}) do
-    finished_statuses = [
-      :completed,
-      :checkmate,
-      :stalemate,
-      :draw,
-      :insufficient_material,
-      :threefold_repetition,
-      :fifty_move_rule,
-      :timeout,
-      :resigned,
-      :abandoned
-    ]
-
-    status not in finished_statuses
-  end
+  defp game_pending?(%{status: status}), do: not finished_status?(status)
 
   defp game_pending?(_), do: false
+
+  defp finished_status?(status) when is_atom(status), do: status in @finished_statuses
+  defp finished_status?(_), do: false
 
   defp infer_role_from_state(%{players: players}, token) when is_binary(token) do
     cond do
