@@ -3,6 +3,7 @@ defmodule LiveChessWeb.GameLive do
 
   alias Chess.Game, as: ChessGame
   alias LiveChess.Games
+  alias LiveChess.Games.Notation
 
   @impl true
   def mount(%{"room_id" => room_id}, _session, socket) do
@@ -23,8 +24,10 @@ defmodule LiveChessWeb.GameLive do
       |> assign(:active_last_move, nil)
       |> assign(:history_cursor, nil)
       |> assign(:history_length, 0)
-      |> assign(:history_caption, "No moves yet.")
-      |> assign(:selected_move_index, nil)
+      |> assign(:history_status, "No moves yet.")
+      |> assign(:history_entries, [])
+      |> assign(:history_pairs, [])
+      |> assign(:history_selected_ply, nil)
       |> assign(:page_title, "LiveView Chess")
 
     if connected?(socket) do
@@ -36,7 +39,9 @@ defmodule LiveChessWeb.GameLive do
             socket
             |> assign(:role, role)
             |> assign(:board_ready?, true)
-            |> set_game_state(state)
+
+          {socket, state} = maybe_track_spectator(socket, role, state)
+          socket = set_game_state(socket, state)
 
           {:ok, maybe_auto_join(socket, state)}
 
@@ -183,10 +188,6 @@ defmodule LiveChessWeb.GameLive do
     {:noreply, update_history_cursor(socket, current + 1)}
   end
 
-  def handle_event("history_start", _params, socket) do
-    {:noreply, update_history_cursor(socket, 0)}
-  end
-
   def handle_event("history_live", _params, socket) do
     {:noreply, update_history_cursor(socket, socket.assigns.history_length)}
   end
@@ -205,16 +206,6 @@ defmodule LiveChessWeb.GameLive do
       true ->
         {:noreply, socket}
     end
-  end
-
-  def handle_event("history_jump", %{"ply" => ply}, socket) do
-    cursor =
-      case Integer.parse(ply) do
-        {value, _} -> value
-        :error -> socket.assigns.history_length
-      end
-
-    {:noreply, update_history_cursor(socket, cursor)}
   end
 
   def handle_event("select_square", %{"square" => square}, socket) do
@@ -359,66 +350,87 @@ defmodule LiveChessWeb.GameLive do
         true -> previous_cursor
       end
 
-    {cursor, length, board_override, move_override, caption, selected_index} =
-      history_assignments(state, desired_cursor)
+    history = history_assignments(state, desired_cursor)
 
     active_last_move =
       cond do
-        length == 0 -> nil
-        cursor == length -> Map.get(state, :last_move)
-        true -> move_override
+        history.length == 0 -> nil
+        history.cursor == history.length -> Map.get(state, :last_move)
+        true -> history.move_override
       end
 
     socket
     |> assign(:game, state)
-    |> assign(:history_cursor, cursor)
-    |> assign(:history_length, length)
-    |> assign(:board_override, board_override)
+    |> assign(:history_cursor, history.cursor)
+    |> assign(:history_length, history.length)
+    |> assign(:board_override, history.board_override)
     |> assign(:active_last_move, active_last_move)
-    |> assign(:history_caption, caption)
-    |> assign(:selected_move_index, selected_index)
+    |> assign(:history_status, history.caption)
+    |> assign(:history_entries, history.entries)
+    |> assign(:history_pairs, history.pairs)
+    |> assign(:history_selected_ply, history.selected_ply)
   end
 
   defp set_game_state(socket, _state), do: socket
 
   defp update_history_cursor(socket, desired_cursor) do
-    {cursor, length, board_override, move_override, caption, selected_index} =
-      history_assignments(socket.assigns.game, desired_cursor)
+    history = history_assignments(socket.assigns.game, desired_cursor)
 
     base_game = socket.assigns.game || %{}
 
     active_last_move =
       cond do
-        length == 0 -> nil
-        cursor == length -> Map.get(base_game, :last_move)
-        true -> move_override
+        history.length == 0 -> nil
+        history.cursor == history.length -> Map.get(base_game, :last_move)
+        true -> history.move_override
       end
 
     socket
-    |> assign(:history_cursor, cursor)
-    |> assign(:history_length, length)
-    |> assign(:board_override, board_override)
+    |> assign(:history_cursor, history.cursor)
+    |> assign(:history_length, history.length)
+    |> assign(:board_override, history.board_override)
     |> assign(:active_last_move, active_last_move)
-    |> assign(:history_caption, caption)
-    |> assign(:selected_move_index, selected_index)
+    |> assign(:history_status, history.caption)
+    |> assign(:history_entries, history.entries)
+    |> assign(:history_pairs, history.pairs)
+    |> assign(:history_selected_ply, history.selected_ply)
     |> assign(:selected_square, nil)
     |> assign(:available_moves, MapSet.new())
   end
 
   defp history_assignments(nil, _desired_cursor) do
-    {0, 0, nil, nil, "No moves yet.", nil}
+    %{
+      cursor: 0,
+      length: 0,
+      board_override: nil,
+      move_override: nil,
+      caption: "No moves yet.",
+      entries: [],
+      pairs: [],
+      selected_ply: nil
+    }
   end
 
   defp history_assignments(game, desired_cursor) when is_map(game) do
-    length = history_length(game)
+    entries = history_moves(game)
+    length = length(entries)
     cursor = clamp_cursor(desired_cursor, length)
     {board_override, move_override} = history_board_override(game, cursor, length)
     caption = history_caption(game, cursor, length)
-    selected_index = selected_move_index(cursor, length)
 
-    {cursor, length, board_override, move_override, caption, selected_index}
+    %{
+      cursor: cursor,
+      length: length,
+      board_override: board_override,
+      move_override: move_override,
+      caption: caption,
+      entries: entries,
+      pairs: history_pairs(entries),
+      selected_ply: if(cursor > 0, do: cursor, else: nil)
+    }
   end
 
+  defp history_length(%{history_moves: moves}) when is_list(moves), do: length(moves)
   defp history_length(%{timeline: timeline}) when is_list(timeline), do: length(timeline)
   defp history_length(_), do: 0
 
@@ -487,25 +499,131 @@ defmodule LiveChessWeb.GameLive do
   defp history_caption(_game, 0, _length), do: "Starting position"
 
   defp history_caption(_game, cursor, length) when cursor == length do
-    if length == 0 do
-      "No moves yet."
-    else
-      "Live position"
-    end
+    if length == 0, do: "No moves yet.", else: "Live position"
   end
 
   defp history_caption(game, cursor, _length) do
-    timeline = Map.get(game, :timeline, [])
+    moves = history_moves(game)
 
-    case Enum.at(timeline, cursor - 1) do
-      %{move: move} -> "After move #{cursor}: #{move}"
+    case Enum.at(moves, cursor - 1) do
+      %{san: san} = move -> "After #{move_prefix(move, cursor)}#{san}"
       _ -> "After move #{cursor}"
     end
   end
 
-  defp selected_move_index(_cursor, 0), do: nil
-  defp selected_move_index(0, _length), do: nil
-  defp selected_move_index(cursor, length), do: min(cursor, length)
+  defp history_moves(%{history_moves: moves}) when is_list(moves) do
+    Enum.map(moves, &normalize_history_move/1)
+  end
+
+  defp history_moves(%{timeline: timeline}) when is_list(timeline) do
+    timeline
+    |> Notation.annotate()
+    |> Enum.map(&normalize_history_move/1)
+  end
+
+  defp history_moves(_), do: []
+
+  defp history_pairs(entries) do
+    entries
+    |> Enum.with_index(1)
+    |> Enum.reduce([], fn {entry, idx}, acc ->
+      color = entry_color(entry, idx)
+      entry = %{entry | color: color}
+      number = move_number(entry, idx)
+
+      case color do
+        :white ->
+          [%{number: number, white: entry, black: nil} | acc]
+
+        :black ->
+          case acc do
+            [%{number: ^number} = pair | rest] ->
+              [%{pair | black: entry} | rest]
+
+            _ ->
+              [%{number: number, white: nil, black: entry} | acc]
+          end
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  defp normalize_history_move(move) when is_map(move) do
+    ply = Map.get(move, :ply) || Map.get(move, "ply")
+    san = Map.get(move, :san) || Map.get(move, "san") || Map.get(move, :move) || ""
+    from = Map.get(move, :from) || Map.get(move, "from")
+    to = Map.get(move, :to) || Map.get(move, "to")
+    raw_color = Map.get(move, :color) || Map.get(move, "color")
+    color = normalize_move_color(raw_color, ply)
+
+    %{
+      ply: ply,
+      san: san,
+      move: Map.get(move, :move) || Map.get(move, "move"),
+      from: from,
+      to: to,
+      color: color
+    }
+  end
+
+  defp normalize_history_move(_),
+    do: %{san: "", color: :white, ply: nil, move: nil, from: nil, to: nil}
+
+  defp normalize_move_color(color, _ply) when color in [:white, :black], do: color
+  defp normalize_move_color("white", _), do: :white
+  defp normalize_move_color("black", _), do: :black
+
+  defp normalize_move_color(_, ply) when is_integer(ply),
+    do: if(rem(ply, 2) == 1, do: :white, else: :black)
+
+  defp normalize_move_color(_, _), do: :white
+
+  defp entry_color(%{color: color}, _) when color in [:white, :black], do: color
+  defp entry_color(%{ply: ply}, _) when is_integer(ply), do: normalize_move_color(nil, ply)
+  defp entry_color(_, idx), do: if(rem(idx, 2) == 1, do: :white, else: :black)
+
+  defp move_number(%{ply: ply}, _) when is_integer(ply), do: div(ply + 1, 2)
+  defp move_number(_entry, idx), do: div(idx + 1, 2)
+
+  defp move_prefix(move, cursor) do
+    number = move_number(move, cursor)
+
+    case entry_color(move, cursor) do
+      :black -> "#{number}... "
+      _ -> "#{number}. "
+    end
+  end
+
+  defp move_cell_classes(nil, _selected_ply) do
+    "moves-cell rounded-md px-2 py-1 text-sm font-medium text-slate-400 dark:text-slate-500"
+  end
+
+  defp move_cell_classes(%{ply: ply}, selected_ply)
+       when is_integer(ply) and is_integer(selected_ply) and ply == selected_ply do
+    "moves-cell rounded-md px-2 py-1 text-sm font-semibold text-emerald-700 bg-emerald-100 dark:bg-emerald-900/60 dark:text-emerald-100"
+  end
+
+  defp move_cell_classes(_move, _selected_ply) do
+    "moves-cell rounded-md px-2 py-1 text-sm font-medium text-slate-700 dark:text-slate-200"
+  end
+
+  defp move_display(nil), do: "—"
+
+  defp move_display(%{san: san}) when is_binary(san) and san != "" do
+    san
+  end
+
+  defp move_display(%{move: move}) when is_binary(move) do
+    move
+  end
+
+  defp move_display(_), do: "—"
+
+  defp move_aria_current(%{ply: ply}, selected_ply)
+       when is_integer(ply) and is_integer(selected_ply) and ply == selected_ply,
+       do: "step"
+
+  defp move_aria_current(_move, _selected_ply), do: nil
 
   defp board_rows(_game, role, board_override) when is_list(board_override),
     do: LiveChess.Games.Board.oriented(board_override, role)
@@ -523,6 +641,19 @@ defmodule LiveChessWeb.GameLive do
     do: cursor >= length
 
   defp viewing_live?(_cursor, _length), do: true
+
+  defp maybe_track_spectator(socket, role, state) do
+    cond do
+      role == :spectator and socket.assigns[:player_token] ->
+        case Games.spectate(socket.assigns.room_id, socket.assigns.player_token) do
+          {:ok, %{state: new_state}} -> {socket, new_state}
+          _ -> {socket, state}
+        end
+
+      true ->
+        {socket, state}
+    end
+  end
 
   defp maybe_auto_join(socket, state) do
     cond do
@@ -644,7 +775,7 @@ defmodule LiveChessWeb.GameLive do
         </div>
 
         <div class="w-full max-w-sm space-y-4">
-          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <div class="panel-surface">
             <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Share</h3>
             <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
               Send this link to a friend so they can join.
@@ -676,20 +807,29 @@ defmodule LiveChessWeb.GameLive do
             </div>
           </div>
 
-          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Players</h3>
+          <div class="panel-surface">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Players</h3>
+              <span
+                class={viewer_count_badge_classes(@game, @role)}
+                aria-label={"#{viewer_count_label(@game, @role)} watching"}
+              >
+                <span aria-hidden="true">👀</span>
+                {viewer_count_label(@game, @role)}
+              </span>
+            </div>
             <div class="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-300">
               <.player_line game={@game} color={:white} token={@player_token} />
               <.player_line game={@game} color={:black} token={@player_token} />
             </div>
           </div>
 
-          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <div class="panel-surface">
             <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Advantage</h3>
             <.evaluation_panel evaluation={@game && Map.get(@game, :evaluation)} />
           </div>
 
-          <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <div class="panel-surface">
             <div class="flex items-center justify-between">
               <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Moves</h3>
               <div class="flex items-center gap-2">
@@ -713,36 +853,44 @@ defmodule LiveChessWeb.GameLive do
               </div>
             </div>
             <p class="mt-2 text-xs font-medium text-slate-500 dark:text-slate-400">
-              {@history_caption}
+              {@history_status}
               <%= if @history_length > 0 do %>
                 <span class="ml-2 font-semibold text-slate-600 dark:text-slate-300">
                   ({@history_cursor || @history_length}/{@history_length})
                 </span>
               <% end %>
             </p>
-            <div class="mt-3 max-h-80 space-y-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
-              <%= if @game && @game.history != [] do %>
-                <%= for {move, index} <- Enum.with_index(@game.history, 1) do %>
-                  <button
-                    type="button"
-                    phx-click="history_jump"
-                    phx-value-ply={index}
-                    class={move_row_class(index, @selected_move_index)}
-                  >
-                    <div class="flex items-center gap-3">
-                      <span class="font-semibold text-slate-600 dark:text-slate-300">{index}.</span>
-                      <span class="font-mono text-sm">{move}</span>
+            <div class="moves-table">
+              <div class="moves-table-header">
+                <span>Move</span>
+                <span>White</span>
+                <span>Black</span>
+              </div>
+              <div class="moves-table-body">
+                <%= if @history_pairs != [] do %>
+                  <%= for pair <- @history_pairs do %>
+                    <div class="moves-table-row">
+                      <span class="moves-table-index">{pair.number}.</span>
+                      <span
+                        class={move_cell_classes(pair.white, @history_selected_ply)}
+                        aria-current={move_aria_current(pair.white, @history_selected_ply)}
+                      >
+                        {move_display(pair.white)}
+                      </span>
+                      <span
+                        class={move_cell_classes(pair.black, @history_selected_ply)}
+                        aria-current={move_aria_current(pair.black, @history_selected_ply)}
+                      >
+                        {move_display(pair.black)}
+                      </span>
                     </div>
-                    <%= if @selected_move_index == index do %>
-                      <span class="ml-3 text-xs font-semibold text-emerald-500">Viewing</span>
-                    <% else %>
-                      <span class="ml-3 text-xs text-transparent">Viewing</span>
-                    <% end %>
-                  </button>
+                  <% end %>
+                <% else %>
+                  <div class="px-4 py-6 text-center text-sm text-slate-400 dark:text-slate-500">
+                    No moves yet.
+                  </div>
                 <% end %>
-              <% else %>
-                <p class="text-slate-500 dark:text-slate-400">No moves yet.</p>
-              <% end %>
+              </div>
             </div>
           </div>
 
@@ -753,6 +901,9 @@ defmodule LiveChessWeb.GameLive do
           <% end %>
         </div>
       </div>
+      <%= if overlay = build_endgame_overlay(@game, @role) do %>
+        <.endgame_overlay overlay={overlay} />
+      <% end %>
       <%= if @show_leave_modal do %>
         <div class="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm">
           <div
@@ -838,6 +989,33 @@ defmodule LiveChessWeb.GameLive do
     """
   end
 
+  attr :overlay, :map, required: true
+
+  def endgame_overlay(assigns) do
+    overlay = assigns.overlay
+
+    assigns =
+      assigns
+      |> assign(:overlay_class, overlay_class(Map.get(overlay, :type)))
+      |> assign(:heading, Map.get(overlay, :heading, ""))
+      |> assign(:subtext, Map.get(overlay, :subtext))
+      |> assign(:particles, Map.get(overlay, :particles, []))
+
+    ~H"""
+    <div class={"endgame-overlay " <> @overlay_class} role="status" aria-live="assertive">
+      <%= for particle <- @particles do %>
+        <span class={particle.class} style={particle.style}></span>
+      <% end %>
+      <div class="endgame-overlay__content">
+        <p class="endgame-overlay__heading">{@heading}</p>
+        <%= if @subtext do %>
+          <p class="endgame-overlay__subtext">{@subtext}</p>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
   attr :evaluation, :any, default: nil
 
   def evaluation_panel(%{evaluation: nil} = assigns) do
@@ -862,8 +1040,8 @@ defmodule LiveChessWeb.GameLive do
     <div class="space-y-3">
       <div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
         <span class="text-left text-slate-700 dark:text-slate-200">White {@white_pct_display}%</span>
-        <span class={"text-sm font-semibold " <> score_text_class(@evaluation)}>
-          {@evaluation.display_score}
+        <span class={"text-xs font-semibold " <> score_text_class(@evaluation)}>
+          {evaluation_indicator(@evaluation)}
         </span>
         <span class="text-right text-slate-700 dark:text-slate-200">Black {@black_pct_display}%</span>
       </div>
@@ -881,12 +1059,12 @@ defmodule LiveChessWeb.GameLive do
   end
 
   defp evaluation_caption(%{advantage: :white, display_score: score}),
-    do: "White is better (#{score})"
+    do: append_score("White is better", score)
 
   defp evaluation_caption(%{advantage: :black, display_score: score}),
-    do: "Black is better (#{score})"
+    do: append_score("Black is better", score)
 
-  defp evaluation_caption(%{display_score: score}), do: "Even position (#{score})"
+  defp evaluation_caption(%{display_score: score}), do: append_score("Even position", score)
 
   defp format_percentage(value) when is_number(value) do
     value
@@ -899,6 +1077,159 @@ defmodule LiveChessWeb.GameLive do
   defp score_text_class(%{advantage: :white}), do: "text-emerald-500"
   defp score_text_class(%{advantage: :black}), do: "text-slate-500 dark:text-slate-300"
   defp score_text_class(_), do: "text-slate-500 dark:text-slate-300"
+
+  defp evaluation_indicator(%{advantage: :white}), do: "White edge"
+  defp evaluation_indicator(%{advantage: :black}), do: "Black edge"
+  defp evaluation_indicator(_), do: "Balanced"
+
+  defp append_score(label, score) when is_binary(score) do
+    trimmed = String.trim(score)
+
+    if trimmed in ["", "0", "0.0", "0.00", "+0.00", "-0.00"] do
+      label
+    else
+      "#{label} (#{trimmed})"
+    end
+  end
+
+  defp append_score(label, _score), do: label
+
+  defp build_endgame_overlay(_game, role) when role not in [:white, :black], do: nil
+  defp build_endgame_overlay(nil, _role), do: nil
+
+  defp build_endgame_overlay(%{status: status} = game, role) do
+    winner = Map.get(game, :winner)
+
+    cond do
+      status != :completed ->
+        nil
+
+      winner not in [:white, :black] ->
+        nil
+
+      true ->
+        players = Map.get(game, :players, %{})
+        opponent_color = opposite_color(role)
+        opponent = Map.get(players, opponent_color)
+
+        cond do
+          winner == role ->
+            %{
+              type: :celebration,
+              heading: "Checkmate! 🎉",
+              subtext: "You defeated #{overlay_player_display(opponent, opponent_color)}.",
+              particles: celebration_particles()
+            }
+
+          winner == opponent_color ->
+            winner_player = Map.get(players, winner)
+
+            %{
+              type: :defeat,
+              heading: "Checkmated",
+              subtext:
+                "#{capitalize_phrase(overlay_player_display(winner_player, winner))} wins this game.",
+              particles: defeat_particles()
+            }
+
+          true ->
+            nil
+        end
+    end
+  end
+
+  defp overlay_class(:defeat), do: "endgame-overlay--defeat"
+  defp overlay_class(_), do: "endgame-overlay--celebration"
+
+  defp celebration_particles do
+    [
+      %{left: "8%", delay: "0s", duration: "3.4s", color: "#facc15"},
+      %{left: "18%", delay: "0.2s", duration: "3.8s", color: "#f97316"},
+      %{left: "28%", delay: "0.45s", duration: "3.6s", color: "#f472b6"},
+      %{left: "38%", delay: "0.15s", duration: "3.9s", color: "#38bdf8"},
+      %{left: "48%", delay: "0.05s", duration: "3.3s", color: "#34d399"},
+      %{left: "58%", delay: "0.6s", duration: "3.7s", color: "#a855f7"},
+      %{left: "68%", delay: "0.25s", duration: "3.5s", color: "#f97316"},
+      %{left: "78%", delay: "0.5s", duration: "3.8s", color: "#22d3ee"},
+      %{left: "88%", delay: "0.35s", duration: "3.6s", color: "#facc15"},
+      %{left: "12%", delay: "0.75s", duration: "3.9s", color: "#ef4444"},
+      %{left: "32%", delay: "0.9s", duration: "3.7s", color: "#14b8a6"},
+      %{left: "52%", delay: "0.65s", duration: "3.5s", color: "#f97316"},
+      %{left: "72%", delay: "0.85s", duration: "3.4s", color: "#f87171"},
+      %{left: "92%", delay: "0.55s", duration: "3.6s", color: "#60a5fa"}
+    ]
+    |> Enum.map(&confetti_particle/1)
+  end
+
+  defp defeat_particles do
+    [
+      %{left: "18%", delay: "0s", duration: "2.8s"},
+      %{left: "28%", delay: "0.35s", duration: "3.1s"},
+      %{left: "38%", delay: "0.6s", duration: "3s"},
+      %{left: "48%", delay: "0.2s", duration: "2.6s"},
+      %{left: "58%", delay: "0.8s", duration: "3.2s"},
+      %{left: "68%", delay: "0.45s", duration: "2.9s"},
+      %{left: "78%", delay: "0.7s", duration: "3.3s"},
+      %{left: "24%", delay: "0.9s", duration: "3.1s"},
+      %{left: "54%", delay: "1.05s", duration: "2.7s"},
+      %{left: "84%", delay: "1.2s", duration: "3s"}
+    ]
+    |> Enum.map(&tear_particle/1)
+  end
+
+  defp confetti_particle(attrs) do
+    style =
+      attrs
+      |> Enum.map(fn
+        {:left, value} -> "--confetti-left: #{value}"
+        {:delay, value} -> "--confetti-delay: #{value}"
+        {:duration, value} -> "--confetti-duration: #{value}"
+        {:color, value} -> "--confetti-color: #{value}"
+      end)
+      |> Enum.join("; ")
+
+    %{class: "endgame-confetti", style: style <> ";"}
+  end
+
+  defp tear_particle(attrs) do
+    style =
+      attrs
+      |> Enum.map(fn
+        {:left, value} -> "--tear-left: #{value}"
+        {:delay, value} -> "--tear-delay: #{value}"
+        {:duration, value} -> "--tear-duration: #{value}"
+      end)
+      |> Enum.join("; ")
+
+    %{class: "endgame-tear", style: style <> ";"}
+  end
+
+  defp overlay_player_display(player, color) do
+    cond do
+      player && Map.get(player, :robot?) ->
+        "the robot"
+
+      player && valid_player_name?(Map.get(player, :name)) ->
+        Map.get(player, :name)
+
+      true ->
+        color_label(color)
+    end
+  end
+
+  defp valid_player_name?(name) when is_binary(name), do: String.trim(name) != ""
+  defp valid_player_name?(_), do: false
+
+  defp capitalize_phrase(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" -> ""
+      trimmed -> String.capitalize(trimmed)
+    end
+  end
+
+  defp capitalize_phrase(_value), do: ""
 
   defp status_line(%{status: :waiting}), do: "Waiting for an opponent..."
 
@@ -950,6 +1281,36 @@ defmodule LiveChessWeb.GameLive do
 
   defp status_classes(_), do: "text-slate-700 dark:text-slate-200"
 
+  defp viewer_count_number(%{spectator_count: count}, role) when is_integer(count) do
+    cond do
+      role == :spectator and count > 0 -> max(count - 1, 0)
+      true -> max(count, 0)
+    end
+  end
+
+  defp viewer_count_number(_, _), do: 0
+
+  defp viewer_count_label(game, role) do
+    case viewer_count_number(game, role) do
+      0 -> "No viewers"
+      1 -> "1 viewer"
+      count -> "#{count} viewers"
+    end
+  end
+
+  defp viewer_count_badge_classes(game, role) do
+    base =
+      "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition"
+
+    if viewer_count_number(game, role) > 0 do
+      base <>
+        " border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/60 dark:bg-emerald-900/30 dark:text-emerald-100"
+    else
+      base <>
+        " border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-300"
+    end
+  end
+
   defp human_turn(:white), do: "White"
   defp human_turn(:black), do: "Black"
   defp human_turn(_), do: "--"
@@ -1000,9 +1361,13 @@ defmodule LiveChessWeb.GameLive do
     assigns = %{}
 
     ~H"""
-    <circle class="piece-detail" cx="32" cy="20" r="6" />
-    <path class="piece-body" d="M24 48h16l3-12c0-6.5-5-12-11-12s-11 5.5-11 12z" />
-    <rect class="piece-base" x="20" y="48" width="24" height="8" rx="2" />
+    <circle class="piece-detail" cx="32" cy="18" r="6" />
+    <path
+      class="piece-body"
+      d="M23 48c0-9.8 5-20 9-20s9 10.2 9 20l4 6H19z"
+    />
+    <path class="piece-detail" d="M24 36h16l3 8H21z" />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
     """
   end
 
@@ -1010,9 +1375,12 @@ defmodule LiveChessWeb.GameLive do
     assigns = %{}
 
     ~H"""
-    <path class="piece-detail" d="M20 20h6v-6h6v6h4v-6h6v6h6v8H20z" />
-    <path class="piece-body" d="M18 28h28v24h6v10H12V52h6z" />
-    <rect class="piece-base" x="16" y="50" width="32" height="6" rx="2" />
+    <path
+      class="piece-body"
+      d="M18 52H46V32l4-4V14H44v6h-6v-6h-8v6h-6v-6H18v14l4 4z"
+    />
+    <rect class="piece-detail" x="20" y="32" width="24" height="6" rx="2" />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
     """
   end
 
@@ -1022,11 +1390,11 @@ defmodule LiveChessWeb.GameLive do
     ~H"""
     <path
       class="piece-body"
-      d="M20 52V36l12-14-8-4 14-8 10 10-4 6 6 8v18h-8l-6 8H20z"
+      d="M20 52V35l14-12-10-6 14-8 12 14-6 7 6 9v13h-8l-6 8H20z"
     />
-    <circle class="piece-dot" cx="40" cy="20" r="2.4" />
-    <path class="piece-line" d="M26 40c6 2 10 8 10 16" />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="2" />
+    <circle class="piece-dot" cx="40" cy="22" r="2.2" />
+    <path class="piece-detail" d="M26 38c6 2 10 7 10 14" />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
     """
   end
 
@@ -1036,11 +1404,11 @@ defmodule LiveChessWeb.GameLive do
     ~H"""
     <path
       class="piece-body"
-      d="M32 12c-8 0-14 6.6-14 15 0 5.4 2.4 9.9 6.6 13.2L20 48v8h24v-8l-4.6-7.8C43.5 37 46 32.6 46 27c0-8.4-6-15-14-15z"
+      d="M32 10c-8.5 0-14.5 7.5-14.5 16 0 5.5 2.5 10.3 6.7 13.6L22 48v6h20v-6l-2.2-8.4C43.8 36.7 46.5 32 46.5 26c0-8.5-6-16-14.5-16z"
     />
-    <path class="piece-line" d="M24 30l16-12" />
+    <path class="piece-detail" d="M24 30l16-12" />
     <circle class="piece-detail" cx="32" cy="18" r="3" />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="2" />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
     """
   end
 
@@ -1048,11 +1416,14 @@ defmodule LiveChessWeb.GameLive do
     assigns = %{}
 
     ~H"""
-    <circle class="piece-detail" cx="18" cy="20" r="3" />
-    <circle class="piece-detail" cx="32" cy="14" r="4" />
-    <circle class="piece-detail" cx="46" cy="20" r="3" />
-    <path class="piece-body" d="M18 24h28l6 10-8 10 4 6v8H16v-8l4-6-8-10z" />
-    <rect class="piece-base" x="16" y="50" width="32" height="6" rx="2" />
+    <circle class="piece-detail" cx="18" cy="22" r="3" />
+    <circle class="piece-detail" cx="32" cy="16" r="4" />
+    <circle class="piece-detail" cx="46" cy="22" r="3" />
+    <path
+      class="piece-body"
+      d="M16 48l-4-8 6-6-6-8 6-6 8 10 6-14 6 14 8-10 6 6-6 8 6 6-4 8z"
+    />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
     """
   end
 
@@ -1060,9 +1431,12 @@ defmodule LiveChessWeb.GameLive do
     assigns = %{}
 
     ~H"""
-    <path class="piece-detail" d="M30 8h4v6h6v4h-6v6h-4v-6h-6v-4h6z" />
-    <path class="piece-body" d="M22 28h20l6 8-8 10 4 6v8H20v-8l4-6-8-10z" />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="2" />
+    <path class="piece-detail" d="M30 6h4v8h6v4h-6v8h-4v-8h-6v-4h6z" />
+    <path
+      class="piece-body"
+      d="M22 52l-4-8 8-10-6-8 6-8h20l6 8-6 8 8 10-4 8z"
+    />
+    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
     """
   end
 
@@ -1096,20 +1470,6 @@ defmodule LiveChessWeb.GameLive do
       base <> " opacity-50 cursor-not-allowed hover:bg-transparent dark:hover:bg-transparent"
     else
       base
-    end
-  end
-
-  defp move_row_class(index, selected_index) do
-    base =
-      "flex items-center justify-between rounded-md px-3 py-2 text-slate-600 dark:text-slate-300 cursor-pointer transition-colors"
-
-    active = " bg-slate-100 text-slate-900 dark:bg-slate-800/60 dark:text-slate-100"
-    inactive = " hover:bg-slate-100 dark:hover:bg-slate-800/40"
-
-    if selected_index == index do
-      base <> active
-    else
-      base <> inactive
     end
   end
 
@@ -1477,6 +1837,9 @@ defmodule LiveChessWeb.GameLive do
   defp opponent_label(:white), do: color_label(:black)
   defp opponent_label(:black), do: color_label(:white)
 
+  defp opposite_color(:white), do: :black
+  defp opposite_color(:black), do: :white
+
   defp turn_indicator_data(nil, _player_token) do
     %{
       class: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-200",
@@ -1494,80 +1857,170 @@ defmodule LiveChessWeb.GameLive do
     viewer_color = color_for_token(game, player_token)
     spectator? = viewer_color not in [:white, :black]
     robot_active? = active_player && Map.get(active_player, :robot?)
+    status = Map.get(game, :status)
+    winner = Map.get(game, :winner)
 
-    cond do
-      active_player && not spectator? && player_token && active_player.token == player_token ->
-        %{
-          class:
-            "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-100 ring-1 ring-inset ring-emerald-300/70",
-          dot_class: "bg-emerald-500 animate-pulse",
-          label: "Your move",
-          sublabel: "#{active_label} pieces"
-        }
+    robot_color =
+      [:white, :black]
+      |> Enum.find(fn color ->
+        player = Map.get(players, color)
+        player && Map.get(player, :robot?)
+      end)
 
-      robot_active? && not spectator? ->
-        %{
-          class: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-100",
-          dot_class: "bg-indigo-400 animate-pulse",
-          label: "Robot thinking",
-          sublabel: "#{active_label} pieces"
-        }
+    finished_indicator =
+      cond do
+        status == :completed and viewer_color in [:white, :black] and winner == viewer_color ->
+          opponent_color = opposite_color(viewer_color)
+          opponent = Map.get(players, opponent_color)
+          opponent_display = overlay_player_display(opponent, opponent_color)
 
-      robot_active? && spectator? ->
-        %{
-          class: "bg-indigo-100/70 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-100",
-          dot_class: "bg-indigo-400 animate-pulse",
-          label: "Robot to move",
-          sublabel: "Spectating · #{opponent_label(active_color)} waits"
-        }
+          sublabel =
+            if opponent_display == "the robot" do
+              "You defeated the robot opponent."
+            else
+              "#{color_label(viewer_color)} checkmated #{opponent_display}."
+            end
 
-      spectator? && active_player && active_player.connected? ->
-        %{
-          class: "bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-100",
-          dot_class: "bg-sky-400 animate-pulse",
-          label: "#{active_label} to move",
-          sublabel: "Spectating · #{opponent_label(active_color)} waits"
-        }
+          %{
+            class:
+              "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-100 ring-1 ring-inset ring-emerald-300/70",
+            dot_class: "bg-emerald-400",
+            label: "You won",
+            sublabel: sublabel
+          }
 
-      spectator? && active_player ->
-        %{
-          class: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-100",
-          dot_class: "bg-amber-400 animate-pulse",
-          label: "#{active_label} to move",
-          sublabel: "Spectating · #{opponent_label(active_color)} reconnecting"
-        }
+        status == :completed and viewer_color in [:white, :black] and winner in [:white, :black] ->
+          winner_player = Map.get(players, winner)
+          winner_display = overlay_player_display(winner_player, winner)
+          robot_win? = winner_display == "the robot"
 
-      active_player && active_player.connected? ->
-        %{
-          class: "bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-100",
-          dot_class: "bg-sky-400 animate-pulse",
-          label: "#{active_label} to move",
-          sublabel: "Opponent is thinking"
-        }
+          sublabel =
+            if robot_win? do
+              "The robot delivered checkmate."
+            else
+              "#{winner_display} wins the game."
+            end
 
-      active_player ->
-        %{
-          class: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-100",
-          dot_class: "bg-amber-400 animate-pulse",
-          label: "#{active_label} to move",
-          sublabel: "Opponent reconnecting"
-        }
+          %{
+            class:
+              "bg-rose-100 text-rose-600 dark:bg-rose-900/60 dark:text-rose-200 ring-1 ring-inset ring-rose-300/60",
+            dot_class: "bg-rose-400",
+            label: if(robot_win?, do: "Robot won", else: "Game over"),
+            sublabel: sublabel
+          }
 
-      spectator? ->
-        %{
-          class: "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-100",
-          dot_class: "bg-slate-400",
-          label: "Spectating",
-          sublabel: "Waiting for players to join"
-        }
+        status == :completed and robot_color ->
+          outcome_label =
+            cond do
+              winner == robot_color -> "Robot won"
+              winner in [:white, :black] -> "Robot lost"
+              true -> "Game over"
+            end
 
-      true ->
-        %{
-          class: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-100",
-          dot_class: "bg-amber-400 animate-pulse",
-          label: "#{active_label} to move",
-          sublabel: "Seat still open"
-        }
+          sublabel =
+            cond do
+              winner == robot_color -> "#{color_label(robot_color)} delivers mate."
+              winner in [:white, :black] -> "#{color_label(winner)} wins the game."
+              true -> "The game has concluded."
+            end
+
+          %{
+            class: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-100",
+            dot_class: "bg-indigo-400",
+            label: outcome_label,
+            sublabel: sublabel
+          }
+
+        status == :completed ->
+          %{
+            class: "bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-100",
+            dot_class: "bg-slate-400",
+            label:
+              if(winner in [:white, :black], do: "#{color_label(winner)} wins", else: "Game over"),
+            sublabel: "Match finished"
+          }
+
+        true ->
+          nil
+      end
+
+    if finished_indicator do
+      finished_indicator
+    else
+      cond do
+        active_player && not spectator? && player_token && active_player.token == player_token ->
+          %{
+            class:
+              "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-100 ring-1 ring-inset ring-emerald-300/70",
+            dot_class: "bg-emerald-500 animate-pulse",
+            label: "Your move",
+            sublabel: "#{active_label} pieces"
+          }
+
+        robot_active? && not spectator? ->
+          %{
+            class: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-100",
+            dot_class: "bg-indigo-400 animate-pulse",
+            label: "Robot thinking",
+            sublabel: "#{active_label} pieces"
+          }
+
+        robot_active? && spectator? ->
+          %{
+            class: "bg-indigo-100/70 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-100",
+            dot_class: "bg-indigo-400 animate-pulse",
+            label: "Robot to move",
+            sublabel: "Spectating · #{opponent_label(active_color)} waits"
+          }
+
+        spectator? && active_player && active_player.connected? ->
+          %{
+            class: "bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-100",
+            dot_class: "bg-sky-400 animate-pulse",
+            label: "#{active_label} to move",
+            sublabel: "Spectating · #{opponent_label(active_color)} waits"
+          }
+
+        spectator? && active_player ->
+          %{
+            class: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-100",
+            dot_class: "bg-amber-400 animate-pulse",
+            label: "#{active_label} to move",
+            sublabel: "Spectating · #{opponent_label(active_color)} reconnecting"
+          }
+
+        active_player && active_player.connected? ->
+          %{
+            class: "bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-100",
+            dot_class: "bg-sky-400 animate-pulse",
+            label: "#{active_label} to move",
+            sublabel: "Opponent is thinking"
+          }
+
+        active_player ->
+          %{
+            class: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-100",
+            dot_class: "bg-amber-400 animate-pulse",
+            label: "#{active_label} to move",
+            sublabel: "Opponent reconnecting"
+          }
+
+        spectator? ->
+          %{
+            class: "bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-100",
+            dot_class: "bg-slate-400",
+            label: "Spectating",
+            sublabel: "Waiting for players to join"
+          }
+
+        true ->
+          %{
+            class: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-100",
+            dot_class: "bg-amber-400 animate-pulse",
+            label: "#{active_label} to move",
+            sublabel: "Seat still open"
+          }
+      end
     end
   end
 end

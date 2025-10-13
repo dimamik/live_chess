@@ -5,7 +5,7 @@ defmodule LiveChess.GameServer do
 
   alias Chess.Game, as: ChessGame
   alias LiveChess.Analysis.Evaluator
-  alias LiveChess.Games.Storage
+  alias LiveChess.Games.{Notation, Storage}
 
   @type room_id :: String.t()
   @type player_token :: String.t()
@@ -284,11 +284,19 @@ defmodule LiveChess.GameServer do
   defp ensure_slot(state, token, color) do
     case state.players[color] do
       nil ->
-        state = put_in(state, [:players, color], %{token: token, connected?: true})
+        state =
+          state
+          |> remove_spectator(token)
+          |> put_in([:players, color], %{token: token, connected?: true})
+
         {:ok, state}
 
       %{token: ^token} = player ->
-        state = put_in(state, [:players, color], %{player | connected?: true})
+        state =
+          state
+          |> remove_spectator(token)
+          |> put_in([:players, color], %{player | connected?: true})
+
         {:ok, state}
 
       _other ->
@@ -448,6 +456,7 @@ defmodule LiveChess.GameServer do
 
     evaluation = Evaluator.summary(state, winner)
     {timeline, initial_fen} = build_timeline(state.game.history, state.game.current_fen)
+    annotated_history = Notation.annotate(timeline)
 
     %{
       room_id: state.room_id,
@@ -459,11 +468,13 @@ defmodule LiveChess.GameServer do
       last_move: state.last_move,
       board: LiveChess.Games.Board.from_game(state.game),
       turn: current_turn(state.game.current_fen),
-      history: Enum.map(timeline, & &1.move),
+      history: Enum.map(annotated_history, & &1.san),
+      history_moves: annotated_history,
       timeline: timeline,
       initial_fen: initial_fen,
       current_fen: state.game.current_fen,
-      evaluation: evaluation
+      evaluation: evaluation,
+      spectator_count: MapSet.size(state.spectators)
     }
   end
 
@@ -542,6 +553,12 @@ defmodule LiveChess.GameServer do
       match?(%{token: ^token}, state.players.black) -> :black
       true -> :spectator
     end
+  end
+
+  defp remove_spectator(state, token) do
+    Map.update(state, :spectators, MapSet.new(), fn spectators ->
+      MapSet.delete(spectators, token)
+    end)
   end
 
   defp player_role(state, token) do

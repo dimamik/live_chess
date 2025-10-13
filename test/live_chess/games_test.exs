@@ -33,7 +33,7 @@ defmodule LiveChess.GamesTest do
       assert is_map(state_after_join.evaluation)
 
       assert {:ok, %{state: move_state}} = Games.make_move(room_id, host_token, "e2", "e4")
-      assert move_state.history == ["e2-e4"]
+      assert move_state.history == ["e4"]
       assert move_state.turn == :black
 
       assert {:error, :not_your_turn} = Games.make_move(room_id, host_token, "d2", "d4")

@@ -116,8 +116,10 @@ defmodule LiveChessWeb.LobbyLive do
   def render(assigns) do
     ~H"""
     <div class="mx-auto max-w-xl px-6 py-12">
-      <h1 class="text-3xl font-semibold text-slate-900">Live Chess</h1>
-      <p class="mt-2 text-slate-600">Create a room to play or join one with a room code.</p>
+      <h1 class="text-3xl font-semibold text-slate-900 dark:text-slate-100">Live Chess</h1>
+      <p class="mt-2 text-slate-600 dark:text-slate-300">
+        Create a room to play or join one with a room code.
+      </p>
 
       <div class="mt-8 space-y-6">
         <div class="grid gap-3 sm:grid-cols-2">
@@ -125,7 +127,7 @@ defmodule LiveChessWeb.LobbyLive do
             type="button"
             phx-click="create_room"
             phx-disable-with="Creating..."
-            class="rounded-md bg-emerald-600 px-4 py-3 text-lg font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 disabled:opacity-60"
+            class="rounded-md bg-emerald-600 px-4 py-3 text-lg font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 disabled:opacity-60 dark:focus:ring-offset-slate-900"
             disabled={@creating_robot?}
           >
             <%= if @creating? do %>
@@ -139,7 +141,7 @@ defmodule LiveChessWeb.LobbyLive do
             type="button"
             phx-click="create_robot_game"
             phx-disable-with="Starting..."
-            class="rounded-md bg-slate-900 px-4 py-3 text-lg font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 disabled:opacity-60"
+            class="rounded-md bg-slate-900 px-4 py-3 text-lg font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 disabled:opacity-60 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-slate-100 dark:focus:ring-slate-200 dark:focus:ring-offset-slate-900"
             disabled={@creating?}
           >
             <%= if @creating_robot? do %>
@@ -150,21 +152,21 @@ defmodule LiveChessWeb.LobbyLive do
           </button>
         </div>
 
-        <div class="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 class="text-xl font-semibold text-slate-800">Join a Room</h2>
+        <div class="rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <h2 class="text-xl font-semibold text-slate-800 dark:text-slate-100">Join a Room</h2>
           <form phx-submit="join_room" phx-change="update_room" class="mt-4 space-y-4">
             <input
               type="text"
               name="room_code"
               placeholder="Enter room code"
               value={@room_code}
-              class="w-full rounded-md border border-slate-300 px-4 py-2 text-lg tracking-widest uppercase focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              class="w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-lg tracking-widest uppercase text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-50 dark:focus:border-emerald-400 dark:focus:ring-emerald-400"
               autocomplete="off"
               maxlength="12"
             />
             <button
               type="submit"
-              class="w-full rounded-md bg-slate-900 px-4 py-2 text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 disabled:opacity-60"
+              class="w-full rounded-md bg-slate-900 px-4 py-2 text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 disabled:opacity-60 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-slate-100 dark:focus:ring-slate-200 dark:focus:ring-offset-slate-900"
               phx-disable-with="Joining..."
             >
               <%= if @joining? do %>
@@ -177,7 +179,7 @@ defmodule LiveChessWeb.LobbyLive do
         </div>
 
         <%= if @error do %>
-          <p class="text-sm font-medium text-red-600">{@error}</p>
+          <p class="text-sm font-medium text-red-600 dark:text-red-400">{@error}</p>
         <% end %>
       </div>
 

@@ -103,48 +103,50 @@
 
 @layer base {
   :root {
-    --app-bg: #f8fafc;
+    --app-bg: #f1f5f9;
     --text-primary: #0f172a;
     --text-secondary: #475569;
     --panel-bg: #ffffff;
-    --panel-border: #e2e8f0;
-    --panel-shadow: rgba(15, 23, 42, 0.08);
-    --board-light: #eeeed2;
-    --board-dark: #769656;
-    --board-outline: rgba(15, 23, 42, 0.12);
-    --board-active-ring: rgba(253, 224, 71, 0.65);
-    --board-move-ring: rgba(45, 212, 191, 0.55);
-    --piece-white-fill: #f5f7fa;
-    --piece-white-shadow: #d7dee8;
-    --piece-white-outline: #2e3a4b;
+    --panel-border: #d9e2f1;
+    --panel-shadow: rgba(15, 23, 42, 0.06);
+    --panel-muted: #f8fafc;
+    --board-light: #f3f8d7;
+    --board-dark: #7fa35a;
+    --board-outline: rgba(71, 85, 105, 0.2);
+    --board-active-ring: rgba(59, 130, 246, 0.5);
+    --board-move-ring: rgba(16, 185, 129, 0.55);
+    --piece-white-fill: #f7f8f3;
+    --piece-white-shadow: #dcded1;
+    --piece-white-outline: #2f3641;
     --piece-white-highlight: #ffffff;
-    --piece-black-fill: #414957;
-    --piece-black-shadow: #252c37;
-    --piece-black-outline: #0f172a;
-    --piece-black-highlight: #5a6372;
+    --piece-black-fill: #45505e;
+    --piece-black-shadow: #2b333f;
+    --piece-black-outline: #101621;
+    --piece-black-highlight: #5e6a7b;
   }
 
   html.dark,
   [data-theme="dark"] {
-    --app-bg: #0f1722;
+    --app-bg: #0f1729;
     --text-primary: #e2e8f0;
     --text-secondary: #94a3b8;
-    --panel-bg: #111e2f;
+    --panel-bg: #101a2b;
     --panel-border: #1f2f45;
-    --panel-shadow: rgba(3, 7, 18, 0.6);
-    --board-light: #d4dcb5;
-    --board-dark: #5d7b41;
-    --board-outline: rgba(148, 163, 184, 0.28);
-    --board-active-ring: rgba(251, 191, 36, 0.55);
-    --board-move-ring: rgba(45, 212, 191, 0.5);
-    --piece-white-fill: #f4f6fb;
-    --piece-white-shadow: #cfd8e7;
-    --piece-white-outline: #253447;
+    --panel-shadow: rgba(2, 6, 23, 0.5);
+    --panel-muted: #111d30;
+    --board-light: #354630;
+    --board-dark: #1d2a1b;
+    --board-outline: rgba(148, 163, 184, 0.32);
+    --board-active-ring: rgba(96, 165, 250, 0.32);
+    --board-move-ring: rgba(20, 184, 166, 0.5);
+    --piece-white-fill: #f0f4ff;
+    --piece-white-shadow: #c5d2ed;
+    --piece-white-outline: #1f2d3f;
     --piece-white-highlight: #ffffff;
-    --piece-black-fill: #242d3b;
-    --piece-black-shadow: #151c28;
-    --piece-black-outline: #e2e8f0;
-    --piece-black-highlight: #3a4555;
+    --piece-black-fill: #141b27;
+    --piece-black-shadow: #0c111b;
+    --piece-black-outline: #b7c4eb;
+    --piece-black-highlight: #2a3547;
   }
 
   body {
@@ -156,70 +158,135 @@
 /* This file is for your main application CSS */
 
 @layer components {
-  .chess-board-panel {
-    border-radius: 0.875rem;
+  .panel-surface {
+    border-radius: 1rem;
     border: 1px solid var(--panel-border);
-    padding: 1rem;
-    background-color: var(--panel-bg);
+    padding: 1.25rem;
+    background: var(--panel-bg);
     box-shadow: 0 16px 32px var(--panel-shadow);
     transition: background-color 150ms ease, border-color 150ms ease, box-shadow 200ms ease;
   }
 
-  .chess-board-grid {
-    margin-top: 1rem;
-    display: grid;
-    grid-template-columns: repeat(8, minmax(0, 1fr));
-    gap: 0.25rem;
+  .chess-board-panel {
+    border-radius: 1.5rem;
+    border: 1px solid var(--panel-border);
+    padding: 1.25rem;
+    background-color: var(--panel-bg);
+    box-shadow: 0 18px 34px var(--panel-shadow);
+    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 200ms ease;
   }
 
-  @media (min-width: 640px) {
-    .chess-board-grid {
-      gap: 0.375rem;
-    }
+  .chess-board-grid {
+    margin-top: 1.25rem;
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 0;
+    border-radius: 1.25rem;
+    overflow: hidden;
+    border: 1px solid var(--board-outline);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
   }
 
   .chess-square {
     position: relative;
     width: 100%;
     aspect-ratio: 1 / 1;
-    border-radius: 0.5rem;
-    border: 1px solid var(--board-outline);
     text-align: center;
-    transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
-    box-shadow: inset 0 2px 4px rgba(15, 23, 42, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    transition: box-shadow 120ms ease;
     outline: none;
   }
 
   .chess-square-light {
     background-color: var(--board-light);
     color: var(--text-primary);
-    box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.25), inset 0 -2px 0 rgba(0, 0, 0, 0.08);
   }
 
   .chess-square-dark {
     background-color: var(--board-dark);
     color: #f8fafc;
-    box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.18), inset 0 -3px 0 rgba(15, 23, 42, 0.28);
-  }
-
-  .chess-square:hover {
-    transform: translateY(-2px);
   }
 
   .chess-square:focus-visible {
-    box-shadow: 0 0 0 3px var(--board-move-ring), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+    box-shadow: inset 0 0 0 3px var(--board-active-ring);
   }
 
   .chess-square-active {
-    box-shadow: 0 0 0 3px var(--board-active-ring), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+    box-shadow: inset 0 0 0 3px var(--board-active-ring);
   }
 
   .chess-square-last-move {
-    box-shadow: 0 0 0 3px var(--board-move-ring), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+    box-shadow: inset 0 0 0 3px var(--board-move-ring);
   }
 
   .chess-square-capture {
-    box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+    box-shadow: inset 0 0 0 3px rgba(248, 113, 113, 0.6);
+  }
+
+  .moves-table {
+    margin-top: 1rem;
+    border: 1px solid var(--panel-border);
+    border-radius: 0.85rem;
+    background: var(--panel-muted);
+    overflow: hidden;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  }
+
+  .moves-table-header {
+    display: grid;
+    grid-template-columns: 3.5rem 1fr 1fr;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1rem;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--panel-border);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+
+  .moves-table-body {
+    max-height: 18rem;
+    overflow-y: auto;
+  }
+
+  .moves-table-row {
+    display: grid;
+    grid-template-columns: 3.5rem 1fr 1fr;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1rem;
+    font-size: 0.95rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  }
+
+  .moves-table-row:last-child {
+    border-bottom: none;
+  }
+
+  .moves-table-index {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .moves-cell {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.75rem;
+  }
+
+  html.dark .moves-table {
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.18);
+  }
+
+  html.dark .moves-table-row {
+    border-bottom-color: rgba(15, 23, 42, 0.6);
   }
 
   .piece-wrapper {
@@ -229,14 +296,8 @@
     width: 100%;
     align-items: center;
     justify-content: center;
-    padding: 0.25rem;
-    filter: drop-shadow(0 5px 6px rgba(15, 23, 42, 0.3));
-  }
-
-  @media (min-width: 640px) {
-    .piece-wrapper {
-      padding: 0.375rem;
-    }
+    padding: 0.2rem;
+    filter: drop-shadow(0 6px 10px rgba(15, 23, 42, 0.28));
   }
 
   .move-dot {
@@ -244,13 +305,13 @@
     width: 0.75rem;
     height: 0.75rem;
     border-radius: 9999px;
-    background: rgba(15, 23, 42, 0.28);
+    background: rgba(15, 23, 42, 0.22);
     box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.65);
   }
 
   html.dark .move-dot,
   [data-theme="dark"] .move-dot {
-    background: rgba(226, 232, 240, 0.28);
+    background: rgba(226, 232, 240, 0.24);
     box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.45);
   }
 
@@ -308,5 +369,147 @@
     --piece-shadow: var(--piece-black-shadow);
     --piece-outline: var(--piece-black-outline);
     --piece-highlight: var(--piece-black-highlight);
+  }
+
+  .endgame-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    text-align: center;
+    padding: 2rem;
+    overflow: hidden;
+  }
+
+  .endgame-overlay__content {
+    position: relative;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: center;
+    max-width: 26rem;
+    padding: clamp(1.5rem, 4vw, 2.75rem);
+    border-radius: 1.5rem;
+    box-shadow: 0 25px 60px rgba(15, 23, 42, 0.35);
+    z-index: 2;
+  }
+
+  .endgame-overlay__heading {
+    font-size: clamp(1.75rem, 4vw, 2.6rem);
+    font-weight: 700;
+  }
+
+  .endgame-overlay__subtext {
+    font-size: clamp(1rem, 2.2vw, 1.2rem);
+    font-weight: 500;
+  }
+
+  .endgame-overlay--celebration {
+    background: radial-gradient(circle at center, rgba(16, 185, 129, 0.22), transparent 70%),
+      rgba(15, 23, 42, 0.55);
+    animation: overlay-fade 320ms ease-out both;
+  }
+
+  .endgame-overlay--celebration .endgame-overlay__content {
+    background: rgba(15, 118, 110, 0.88);
+    color: #ecfdf5;
+    border: 1px solid rgba(16, 185, 129, 0.5);
+    backdrop-filter: blur(12px);
+  }
+
+  .endgame-overlay--defeat {
+    background: radial-gradient(circle at center, rgba(148, 163, 184, 0.16), transparent 75%),
+      rgba(15, 23, 42, 0.6);
+    animation: overlay-fade 420ms ease-out both;
+  }
+
+  .endgame-overlay--defeat .endgame-overlay__content {
+    background: rgba(30, 41, 59, 0.9);
+    color: #f1f5f9;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    backdrop-filter: blur(14px);
+  }
+
+  .endgame-confetti,
+  .endgame-tear {
+    position: absolute;
+    top: -10%;
+    width: 0.7rem;
+    height: 1.4rem;
+    border-radius: 0.25rem;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .endgame-confetti {
+    animation: confetti-fall var(--confetti-duration, 3.8s) linear forwards;
+    animation-delay: var(--confetti-delay, 0s);
+    left: var(--confetti-left, 50%);
+    background: var(--confetti-color, #fbbf24);
+  }
+
+  .endgame-tear {
+    width: 0.5rem;
+    height: 1.6rem;
+    border-radius: 999px 999px 40% 40%;
+    background: rgba(148, 163, 184, 0.7);
+    animation: tear-fall var(--tear-duration, 2.8s) ease-in forwards;
+    animation-delay: var(--tear-delay, 0s);
+    left: var(--tear-left, 50%);
+  }
+
+  html.dark .endgame-overlay--celebration .endgame-overlay__content {
+    background: rgba(16, 95, 87, 0.92);
+  }
+
+  html.dark .endgame-overlay--defeat .endgame-overlay__content {
+    background: rgba(15, 23, 42, 0.95);
+  }
+}
+
+@keyframes overlay-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translate3d(0, -15vh, 0) rotateZ(0deg);
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translate3d(0, 110vh, 0) rotateZ(380deg);
+    opacity: 0;
+  }
+}
+
+@keyframes tear-fall {
+  0% {
+    transform: translate3d(0, -20vh, 0) scale(0.6);
+    opacity: 0;
+  }
+
+  15% {
+    opacity: 0.7;
+  }
+
+  100% {
+    transform: translate3d(0, 105vh, 0) scale(1.1);
+    opacity: 0;
   }
 }
