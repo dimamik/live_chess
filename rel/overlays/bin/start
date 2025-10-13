@@ -2,5 +2,8 @@
 set -e
 cd -P -- "$(dirname -- "$0")"
 
+# Migrate the database
+./live_chess eval LiveChess.Release.migrate
+
 # Start the Phoenix endpoint inside the release.
 PHX_SERVER=true exec ./live_chess start
