@@ -26,6 +26,22 @@ defmodule LiveChess.Games do
     end
   end
 
+  def create_robot_game(creator_token, opts \\ []) do
+    room_id = unique_room_id()
+
+    with {:ok, _pid} <- GameSupervisor.start_game(room_id),
+         {:ok, %{role: human_color}} <- GameServer.create(room_id, creator_token),
+         robot_color <- Keyword.get(opts, :robot_color, opponent_color(human_color)),
+         true <- robot_color in [:white, :black],
+         {:ok, _state} <- GameServer.add_robot(room_id, robot_color) do
+      {:ok, room_id}
+    else
+      {:error, reason} -> {:error, reason}
+      false -> {:error, :invalid_color}
+      other -> other
+    end
+  end
+
   def join_game(room_id, token) do
     with_server(room_id, fn -> GameServer.join(room_id, token) end)
   end
@@ -92,4 +108,8 @@ defmodule LiveChess.Games do
         fun.()
     end
   end
+
+  defp opponent_color(:white), do: :black
+  defp opponent_color(:black), do: :white
+  defp opponent_color(_), do: :black
 end

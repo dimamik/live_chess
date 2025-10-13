@@ -32,6 +32,10 @@ defmodule LiveChess.GameServer do
     GenServer.call(via(room_id), {:spectator, viewer_token})
   end
 
+  def add_robot(room_id, color) do
+    GenServer.call(via(room_id), {:add_robot, color})
+  end
+
   def available_moves(room_id, player_token, from_square) do
     GenServer.call(via(room_id), {:available_moves, player_token, from_square})
   end
@@ -98,6 +102,42 @@ defmodule LiveChess.GameServer do
       broadcast(state)
       {:reply, {:ok, payload(state, token, color)}, state}
     end
+  end
+
+  def handle_call({:add_robot, color}, _from, state) when color in [:white, :black] do
+    cond do
+      state.robot != nil ->
+        {:reply, {:error, :robot_already_present}, state}
+
+      state.players[color] != nil ->
+        {:reply, {:error, :slot_taken}, state}
+
+      true ->
+        robot_token = robot_token(state.room_id, color)
+
+        robot_player = %{
+          token: robot_token,
+          connected?: true,
+          robot?: true,
+          name: "Robot"
+        }
+
+        robot_state = %{color: color, token: robot_token, delay_ms: 700}
+
+        state =
+          state
+          |> put_in([:players, color], robot_player)
+          |> Map.put(:robot, robot_state)
+
+        state = maybe_activate(state)
+        state = maybe_queue_robot_move(state)
+
+        {:reply, {:ok, serialize(state)}, state}
+    end
+  end
+
+  def handle_call({:add_robot, _color}, _from, state) do
+    {:reply, {:error, :invalid_color}, state}
   end
 
   def handle_call({:join, token}, _from, state) do
@@ -174,6 +214,7 @@ defmodule LiveChess.GameServer do
         |> Map.put(:game, game)
         |> Map.put(:last_move, %{from: from, to: to, promotion: promotion, color: color})
         |> maybe_finish(game)
+        |> maybe_queue_robot_move()
 
       broadcast(updated)
       {:reply, {:ok, payload(updated, token, color)}, updated}
@@ -196,6 +237,7 @@ defmodule LiveChess.GameServer do
         |> Map.put(:status, :resigned)
         |> Map.put(:winner, winner)
         |> Map.put(:last_move, %{action: :resigned, color: color})
+        |> cancel_robot_timer()
 
       broadcast(updated)
       {:reply, {:ok, payload(updated, token, color)}, updated}
@@ -208,6 +250,16 @@ defmodule LiveChess.GameServer do
 
   def handle_call(:state, _from, state) do
     {:reply, serialize(state), state}
+  end
+
+  @impl true
+  def handle_info(:robot_move, state) do
+    state = %{state | robot_timer: nil}
+
+    case perform_robot_move(state) do
+      {:ok, updated} -> {:noreply, updated}
+      {:error, _reason} -> {:noreply, state}
+    end
   end
 
   @impl true
@@ -350,7 +402,9 @@ defmodule LiveChess.GameServer do
   end
 
   defp broadcast(state) do
-    _ = Storage.persist_state(state)
+    sanitized = persistable_state(state)
+
+    _ = Storage.persist_state(sanitized)
 
     Phoenix.PubSub.broadcast(
       LiveChess.PubSub,
@@ -422,8 +476,20 @@ defmodule LiveChess.GameServer do
 
   defp serialize_player(nil), do: nil
 
-  defp serialize_player(%{token: token, connected?: connected?}) do
-    %{token: token, connected?: connected?}
+  defp serialize_player(%{token: token, connected?: connected?} = player) do
+    base = %{token: token, connected?: connected?}
+
+    base =
+      if Map.get(player, :robot?) do
+        Map.put(base, :robot?, true)
+      else
+        base
+      end
+
+    case Map.get(player, :name) do
+      nil -> base
+      name -> Map.put(base, :name, name)
+    end
   end
 
   defp first_available_color(state) do
@@ -449,7 +515,9 @@ defmodule LiveChess.GameServer do
       spectators: MapSet.new(),
       status: :waiting,
       last_move: nil,
-      winner: nil
+      winner: nil,
+      robot: nil,
+      robot_timer: nil
     }
   end
 
@@ -462,6 +530,8 @@ defmodule LiveChess.GameServer do
       _ -> MapSet.new()
     end)
     |> Map.put_new(:winner, nil)
+    |> Map.put_new(:robot, nil)
+    |> Map.put(:robot_timer, nil)
   end
 
   defp hydrate_state(_state, room_id), do: new_state(room_id)
@@ -491,6 +561,120 @@ defmodule LiveChess.GameServer do
   defp opponent_color(:white), do: :black
   defp opponent_color(:black), do: :white
   defp opponent_color(_), do: nil
+
+  defp robot_token(room_id, color), do: "robot:#{room_id}:#{color}"
+
+  defp robot_turn?(%{robot: %{color: color}} = state) do
+    state.status == :active and current_turn(state.game.current_fen) == color
+  end
+
+  defp robot_turn?(_), do: false
+
+  defp robot_delay(%{robot: %{delay_ms: delay}}) when is_integer(delay) do
+    delay
+  end
+
+  defp robot_delay(_), do: 600
+
+  defp maybe_queue_robot_move(%{robot: nil} = state), do: cancel_robot_timer(state)
+
+  defp maybe_queue_robot_move(state) do
+    cond do
+      robot_turn?(state) ->
+        case state.robot_timer do
+          nil ->
+            ref = Process.send_after(self(), :robot_move, robot_delay(state))
+            %{state | robot_timer: ref}
+
+          _ref ->
+            state
+        end
+
+      true ->
+        cancel_robot_timer(state)
+    end
+  end
+
+  defp cancel_robot_timer(%{robot_timer: nil} = state), do: state
+
+  defp cancel_robot_timer(state) do
+    _ = Process.cancel_timer(state.robot_timer)
+    %{state | robot_timer: nil}
+  end
+
+  defp perform_robot_move(%{robot: %{color: color}} = state) do
+    with true <- state.status == :active,
+         true <- current_turn(state.game.current_fen) == color,
+         {:ok, %{from: from, to: to, promotion: promotion}} <- robot_pick_move(state.game, color),
+         {:ok, game} <- ChessGame.play(state.game, String.downcase("#{from}-#{to}"), promotion) do
+      updated =
+        state
+        |> Map.put(:game, game)
+        |> Map.put(:last_move, %{
+          from: from,
+          to: to,
+          promotion: promotion,
+          color: color,
+          robot?: true
+        })
+        |> maybe_finish(game)
+        |> maybe_queue_robot_move()
+
+      broadcast(updated)
+      {:ok, updated}
+    else
+      _ -> {:error, :unable_to_move}
+    end
+  end
+
+  defp perform_robot_move(state), do: {:ok, state}
+
+  defp robot_pick_move(game, color) do
+    game
+    |> robot_move_candidates(color)
+    |> case do
+      [] -> {:error, :no_moves}
+      moves -> {:ok, Enum.random(moves)}
+    end
+  end
+
+  defp robot_move_candidates(game, color) do
+    for file <- ?a..?h,
+        rank <- ?1..?8,
+        square = <<file, rank>>,
+        {:ok, piece} <- [fetch_piece(game, square)],
+        robot_piece?(piece, color),
+        dest <- legal_moves_for(game, square) do
+      %{from: String.downcase(square), to: dest, promotion: robot_promotion(piece, dest)}
+    end
+  end
+
+  defp robot_piece?(%{color: "w"}, :white), do: true
+  defp robot_piece?(%{color: "b"}, :black), do: true
+  defp robot_piece?(_, _), do: false
+
+  defp robot_promotion(%{role: :pawn}, destination) when is_binary(destination) do
+    case String.last(destination) do
+      "8" -> "q"
+      "1" -> "q"
+      _ -> "q"
+    end
+  end
+
+  defp robot_promotion(%{type: :pawn}, destination) when is_binary(destination) do
+    case String.last(destination) do
+      "8" -> "q"
+      "1" -> "q"
+      _ -> "q"
+    end
+  end
+
+  defp robot_promotion(_piece, _destination), do: "q"
+
+  defp persistable_state(state) do
+    state
+    |> Map.put(:robot_timer, nil)
+  end
 
   defp topic(room_id), do: "game:" <> room_id
 

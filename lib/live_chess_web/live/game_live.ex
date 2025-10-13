@@ -1309,6 +1309,36 @@ defmodule LiveChessWeb.GameLive do
             end
         }
 
+      %{robot?: true} = player ->
+        base_container =
+          "border border-indigo-200 bg-indigo-50 dark:border-indigo-500/50 dark:bg-indigo-900/30 shadow-sm"
+
+        name = Map.get(player, :name, "Robot opponent")
+
+        %{
+          role_label: color_label(color),
+          title: name,
+          description:
+            if(active_turn?,
+              do: "The robot is thinking through the next move.",
+              else: "Waiting for you to move."
+            ),
+          container_class:
+            if active_turn? do
+              base_container <> " ring-2 ring-indigo-300/70"
+            else
+              base_container
+            end,
+          dot_class:
+            if active_turn? do
+              "bg-indigo-400 animate-pulse"
+            else
+              "bg-indigo-400"
+            end,
+          badge_text: "Robot",
+          badge_class: "bg-indigo-100 text-indigo-700 dark:bg-indigo-800 dark:text-indigo-100"
+        }
+
       %{connected?: true} ->
         base_container =
           "border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60"
@@ -1463,6 +1493,7 @@ defmodule LiveChessWeb.GameLive do
     active_player = Map.get(players, active_color)
     viewer_color = color_for_token(game, player_token)
     spectator? = viewer_color not in [:white, :black]
+    robot_active? = active_player && Map.get(active_player, :robot?)
 
     cond do
       active_player && not spectator? && player_token && active_player.token == player_token ->
@@ -1472,6 +1503,22 @@ defmodule LiveChessWeb.GameLive do
           dot_class: "bg-emerald-500 animate-pulse",
           label: "Your move",
           sublabel: "#{active_label} pieces"
+        }
+
+      robot_active? && not spectator? ->
+        %{
+          class: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-100",
+          dot_class: "bg-indigo-400 animate-pulse",
+          label: "Robot thinking",
+          sublabel: "#{active_label} pieces"
+        }
+
+      robot_active? && spectator? ->
+        %{
+          class: "bg-indigo-100/70 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-100",
+          dot_class: "bg-indigo-400 animate-pulse",
+          label: "Robot to move",
+          sublabel: "Spectating · #{opponent_label(active_color)} waits"
         }
 
       spectator? && active_player && active_player.connected? ->

@@ -11,12 +11,14 @@ defmodule LiveChessWeb.LobbyLive do
      |> assign(:room_code, "")
      |> assign(:error, nil)
      |> assign(:creating?, false)
+     |> assign(:creating_robot?, false)
      |> assign(:joining?, false)}
   end
 
   @impl true
   def handle_event("create_room", _params, socket) do
-    socket = assign(socket, creating?: true, error: nil)
+    socket =
+      socket |> assign(:creating?, true) |> assign(:creating_robot?, false) |> assign(:error, nil)
 
     case Games.create_game(socket.assigns.player_token) do
       {:ok, room_id} ->
@@ -27,6 +29,31 @@ defmodule LiveChessWeb.LobbyLive do
          socket
          |> assign(:creating?, false)
          |> assign(:error, format_create_error(reason))}
+    end
+  end
+
+  def handle_event("create_robot_game", _params, socket) do
+    socket =
+      socket
+      |> assign(:creating?, false)
+      |> assign(:creating_robot?, true)
+      |> assign(:error, nil)
+
+    case Games.create_robot_game(socket.assigns.player_token) do
+      {:ok, room_id} ->
+        {:noreply, push_navigate(socket, to: ~p"/game/#{room_id}")}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> assign(:creating_robot?, false)
+         |> assign(:error, format_robot_error(reason))}
+
+      _other ->
+        {:noreply,
+         socket
+         |> assign(:creating_robot?, false)
+         |> assign(:error, format_robot_error(:unknown))}
     end
   end
 
@@ -79,6 +106,12 @@ defmodule LiveChessWeb.LobbyLive do
   defp format_create_error(:slot_taken), do: "This room already has a host. Try joining instead."
   defp format_create_error(_), do: "We couldn't create a room. Please try again."
 
+  defp format_robot_error(:slot_taken),
+    do: "All seats are already taken. Try creating a new game."
+
+  defp format_robot_error(:robot_already_present), do: "This room already has a robot opponent."
+  defp format_robot_error(_), do: "We couldn't start a robot game. Please try again."
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -87,18 +120,35 @@ defmodule LiveChessWeb.LobbyLive do
       <p class="mt-2 text-slate-600">Create a room to play or join one with a room code.</p>
 
       <div class="mt-8 space-y-6">
-        <button
-          type="button"
-          phx-click="create_room"
-          phx-disable-with="Creating..."
-          class="w-full rounded-md bg-emerald-600 px-4 py-3 text-lg font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 disabled:opacity-60"
-        >
-          <%= if @creating? do %>
-            Creating room...
-          <% else %>
-            Create Room
-          <% end %>
-        </button>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            phx-click="create_room"
+            phx-disable-with="Creating..."
+            class="rounded-md bg-emerald-600 px-4 py-3 text-lg font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 disabled:opacity-60"
+            disabled={@creating_robot?}
+          >
+            <%= if @creating? do %>
+              Creating room...
+            <% else %>
+              Create Room
+            <% end %>
+          </button>
+
+          <button
+            type="button"
+            phx-click="create_robot_game"
+            phx-disable-with="Starting..."
+            class="rounded-md bg-slate-900 px-4 py-3 text-lg font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 disabled:opacity-60"
+            disabled={@creating?}
+          >
+            <%= if @creating_robot? do %>
+              Starting robot match...
+            <% else %>
+              Play vs Robot
+            <% end %>
+          </button>
+        </div>
 
         <div class="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           <h2 class="text-xl font-semibold text-slate-800">Join a Room</h2>
