@@ -54,6 +54,31 @@ defmodule LiveChess.GameServer do
 
   ## Server callbacks
 
+  defp build_timeline(history, current_fen) when is_list(history) do
+    {entries, initial_fen} =
+      Enum.reduce(history, {[], current_fen}, fn entry, {acc, after_fen} ->
+        move = Map.get(entry, :move)
+        before_fen = Map.get(entry, :fen)
+
+        timeline_entry = %{
+          move: move,
+          before_fen: before_fen,
+          after_fen: after_fen
+        }
+
+        {[timeline_entry | acc], before_fen}
+      end)
+
+    timeline =
+      entries
+      |> Enum.with_index(1)
+      |> Enum.map(fn {entry, index} -> Map.put(entry, :ply, index) end)
+
+    {timeline, initial_fen}
+  end
+
+  defp build_timeline(_history, current_fen), do: {[], current_fen}
+
   @impl true
   def init(room_id) do
     state =
@@ -368,6 +393,7 @@ defmodule LiveChess.GameServer do
         end
 
     evaluation = Evaluator.summary(state, winner)
+    {timeline, initial_fen} = build_timeline(state.game.history, state.game.current_fen)
 
     %{
       room_id: state.room_id,
@@ -379,7 +405,10 @@ defmodule LiveChess.GameServer do
       last_move: state.last_move,
       board: LiveChess.Games.Board.from_game(state.game),
       turn: current_turn(state.game.current_fen),
-      history: Enum.reverse(Enum.map(state.game.history, fn entry -> entry.move end)),
+      history: Enum.map(timeline, & &1.move),
+      timeline: timeline,
+      initial_fen: initial_fen,
+      current_fen: state.game.current_fen,
       evaluation: evaluation
     }
   end

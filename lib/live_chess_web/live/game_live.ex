@@ -1,6 +1,7 @@
 defmodule LiveChessWeb.GameLive do
   use LiveChessWeb, :live_view
 
+  alias Chess.Game, as: ChessGame
   alias LiveChess.Games
 
   @impl true
@@ -17,6 +18,13 @@ defmodule LiveChessWeb.GameLive do
       |> assign(:player_token, socket.assigns.player_token)
       |> assign(:board_ready?, false)
       |> assign(:show_leave_modal, false)
+      |> assign(:show_surrender_modal, false)
+      |> assign(:board_override, nil)
+      |> assign(:active_last_move, nil)
+      |> assign(:history_cursor, nil)
+      |> assign(:history_length, 0)
+      |> assign(:history_caption, "No moves yet.")
+      |> assign(:selected_move_index, nil)
       |> assign(:page_title, "LiveView Chess")
 
     if connected?(socket) do
@@ -27,8 +35,8 @@ defmodule LiveChessWeb.GameLive do
           socket =
             socket
             |> assign(:role, role)
-            |> assign(:game, state)
             |> assign(:board_ready?, true)
+            |> set_game_state(state)
 
           {:ok, maybe_auto_join(socket, state)}
 
@@ -69,7 +77,7 @@ defmodule LiveChessWeb.GameLive do
           {:ok,
            socket
            |> assign(:role, role)
-           |> assign(:game, state)}
+           |> set_game_state(state)}
 
         _ ->
           {:ok, socket}
@@ -84,7 +92,7 @@ defmodule LiveChessWeb.GameLive do
         {:noreply,
          socket
          |> assign(:role, role)
-         |> assign(:game, state)
+         |> set_game_state(state)
          |> assign(:error_message, nil)}
 
       {:error, :slot_taken} ->
@@ -114,34 +122,106 @@ defmodule LiveChessWeb.GameLive do
      |> push_navigate(to: ~p"/")}
   end
 
-  def handle_event("surrender", _params, socket) do
+  def handle_event("request_surrender", _params, socket) do
     if show_surrender_button?(socket.assigns.role, socket.assigns.game) do
-      case Games.resign(socket.assigns.room_id, socket.assigns.player_token) do
-        {:ok, %{state: state}} ->
-          {:noreply,
-           socket
-           |> assign(:game, state)
-           |> assign(:error_message, nil)}
-
-        {:error, :game_not_active} ->
-          {:noreply, assign(socket, :error_message, "The game is no longer active.")}
-
-        {:error, :not_authorized} ->
-          {:noreply, assign(socket, :error_message, "Only seated players can surrender.")}
-
-        {:error, message} when is_binary(message) ->
-          {:noreply, assign(socket, :error_message, message)}
-
-        {:error, _reason} ->
-          {:noreply, assign(socket, :error_message, "Unable to surrender right now.")}
-      end
+      {:noreply, assign(socket, :show_surrender_modal, true)}
     else
       {:noreply, socket}
     end
   end
 
+  def handle_event("cancel_surrender", _params, socket) do
+    {:noreply, assign(socket, :show_surrender_modal, false)}
+  end
+
+  def handle_event("confirm_surrender", _params, socket) do
+    if show_surrender_button?(socket.assigns.role, socket.assigns.game) do
+      case Games.resign(socket.assigns.room_id, socket.assigns.player_token) do
+        {:ok, %{state: state}} ->
+          {:noreply,
+           socket
+           |> assign(:show_surrender_modal, false)
+           |> set_game_state(state)
+           |> assign(:error_message, nil)}
+
+        {:error, :game_not_active} ->
+          {:noreply,
+           socket
+           |> assign(:show_surrender_modal, false)
+           |> assign(:error_message, "The game is no longer active.")}
+
+        {:error, :not_authorized} ->
+          {:noreply,
+           socket
+           |> assign(:show_surrender_modal, false)
+           |> assign(:error_message, "Only seated players can surrender.")}
+
+        {:error, message} when is_binary(message) ->
+          {:noreply,
+           socket
+           |> assign(:show_surrender_modal, false)
+           |> assign(:error_message, message)}
+
+        {:error, _reason} ->
+          {:noreply,
+           socket
+           |> assign(:show_surrender_modal, false)
+           |> assign(:error_message, "Unable to surrender right now.")}
+      end
+    else
+      {:noreply, assign(socket, :show_surrender_modal, false)}
+    end
+  end
+
+  def handle_event("history_prev", _params, socket) do
+    current = socket.assigns.history_cursor || socket.assigns.history_length
+    {:noreply, update_history_cursor(socket, current - 1)}
+  end
+
+  def handle_event("history_next", _params, socket) do
+    current = socket.assigns.history_cursor || socket.assigns.history_length
+    {:noreply, update_history_cursor(socket, current + 1)}
+  end
+
+  def handle_event("history_start", _params, socket) do
+    {:noreply, update_history_cursor(socket, 0)}
+  end
+
+  def handle_event("history_live", _params, socket) do
+    {:noreply, update_history_cursor(socket, socket.assigns.history_length)}
+  end
+
+  def handle_event("escape_press", _params, socket) do
+    cond do
+      socket.assigns[:show_surrender_modal] ->
+        {:noreply, assign(socket, :show_surrender_modal, false)}
+
+      socket.assigns[:show_leave_modal] ->
+        {:noreply, assign(socket, :show_leave_modal, false)}
+
+      show_surrender_button?(socket.assigns.role, socket.assigns.game) ->
+        {:noreply, assign(socket, :show_surrender_modal, true)}
+
+      true ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("history_jump", %{"ply" => ply}, socket) do
+    cursor =
+      case Integer.parse(ply) do
+        {value, _} -> value
+        :error -> socket.assigns.history_length
+      end
+
+    {:noreply, update_history_cursor(socket, cursor)}
+  end
+
   def handle_event("select_square", %{"square" => square}, socket) do
     cond do
+      not viewing_live?(socket) ->
+        {:noreply, socket}
+
       not active_player?(socket) ->
         {:noreply, socket}
 
@@ -175,7 +255,7 @@ defmodule LiveChessWeb.GameLive do
       socket
       |> maybe_play_join_sound(previous_game, state)
       |> maybe_play_move_sound(previous_game, state)
-      |> assign(:game, state)
+      |> set_game_state(state)
       |> assign(:error_message, nil)
       |> maybe_reset_selection(state)
 
@@ -208,7 +288,7 @@ defmodule LiveChessWeb.GameLive do
       {:ok, %{state: state}} ->
         {:noreply,
          socket
-         |> assign(:game, state)
+         |> set_game_state(state)
          |> assign(:selected_square, nil)
          |> assign(:available_moves, MapSet.new())
          |> assign(:error_message, nil)}
@@ -267,8 +347,182 @@ defmodule LiveChessWeb.GameLive do
 
   defp build_share_url(room_id), do: to_string(url(~p"/game/#{room_id}"))
 
-  defp oriented_board(%{board: board}, role), do: LiveChess.Games.Board.oriented(board, role)
-  defp oriented_board(_nil, _role), do: []
+  defp set_game_state(socket, state) when is_map(state) do
+    previous_cursor = socket.assigns[:history_cursor]
+    previous_length = socket.assigns[:history_length] || 0
+    new_length = history_length(state)
+
+    desired_cursor =
+      cond do
+        is_nil(previous_cursor) -> nil
+        previous_cursor >= previous_length -> new_length
+        true -> previous_cursor
+      end
+
+    {cursor, length, board_override, move_override, caption, selected_index} =
+      history_assignments(state, desired_cursor)
+
+    active_last_move =
+      cond do
+        length == 0 -> nil
+        cursor == length -> Map.get(state, :last_move)
+        true -> move_override
+      end
+
+    socket
+    |> assign(:game, state)
+    |> assign(:history_cursor, cursor)
+    |> assign(:history_length, length)
+    |> assign(:board_override, board_override)
+    |> assign(:active_last_move, active_last_move)
+    |> assign(:history_caption, caption)
+    |> assign(:selected_move_index, selected_index)
+  end
+
+  defp set_game_state(socket, _state), do: socket
+
+  defp update_history_cursor(socket, desired_cursor) do
+    {cursor, length, board_override, move_override, caption, selected_index} =
+      history_assignments(socket.assigns.game, desired_cursor)
+
+    base_game = socket.assigns.game || %{}
+
+    active_last_move =
+      cond do
+        length == 0 -> nil
+        cursor == length -> Map.get(base_game, :last_move)
+        true -> move_override
+      end
+
+    socket
+    |> assign(:history_cursor, cursor)
+    |> assign(:history_length, length)
+    |> assign(:board_override, board_override)
+    |> assign(:active_last_move, active_last_move)
+    |> assign(:history_caption, caption)
+    |> assign(:selected_move_index, selected_index)
+    |> assign(:selected_square, nil)
+    |> assign(:available_moves, MapSet.new())
+  end
+
+  defp history_assignments(nil, _desired_cursor) do
+    {0, 0, nil, nil, "No moves yet.", nil}
+  end
+
+  defp history_assignments(game, desired_cursor) when is_map(game) do
+    length = history_length(game)
+    cursor = clamp_cursor(desired_cursor, length)
+    {board_override, move_override} = history_board_override(game, cursor, length)
+    caption = history_caption(game, cursor, length)
+    selected_index = selected_move_index(cursor, length)
+
+    {cursor, length, board_override, move_override, caption, selected_index}
+  end
+
+  defp history_length(%{timeline: timeline}) when is_list(timeline), do: length(timeline)
+  defp history_length(_), do: 0
+
+  defp clamp_cursor(value, length) when is_integer(value), do: value |> max(0) |> min(length)
+  defp clamp_cursor(_value, length), do: length
+
+  defp history_board_override(game, cursor, length) do
+    timeline = Map.get(game, :timeline, [])
+
+    cond do
+      length == 0 ->
+        {nil, nil}
+
+      cursor == length ->
+        {nil, nil}
+
+      cursor == 0 ->
+        {board_from_fen(Map.get(game, :initial_fen)), nil}
+
+      true ->
+        case Enum.at(timeline, cursor - 1) do
+          %{after_fen: after_fen, move: move} ->
+            {board_from_fen(after_fen), parse_move_string(move)}
+
+          _ ->
+            {nil, nil}
+        end
+    end
+  end
+
+  defp board_from_fen(nil), do: nil
+
+  defp board_from_fen(fen) when is_binary(fen) do
+    try do
+      ChessGame.new(fen)
+      |> LiveChess.Games.Board.from_game()
+    rescue
+      _ -> nil
+    end
+  end
+
+  defp board_from_fen(_), do: nil
+
+  defp parse_move_string(move) when is_binary(move) do
+    case String.split(move, "-", parts: 2) do
+      [from, to_part] ->
+        to = String.slice(to_part, 0, 2)
+
+        if byte_size(from) == 2 and byte_size(to) == 2 do
+          %{
+            from: String.downcase(from),
+            to: String.downcase(to)
+          }
+        else
+          nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_move_string(_), do: nil
+
+  defp history_caption(_game, _cursor, 0), do: "No moves yet."
+  defp history_caption(_game, 0, _length), do: "Starting position"
+
+  defp history_caption(_game, cursor, length) when cursor == length do
+    if length == 0 do
+      "No moves yet."
+    else
+      "Live position"
+    end
+  end
+
+  defp history_caption(game, cursor, _length) do
+    timeline = Map.get(game, :timeline, [])
+
+    case Enum.at(timeline, cursor - 1) do
+      %{move: move} -> "After move #{cursor}: #{move}"
+      _ -> "After move #{cursor}"
+    end
+  end
+
+  defp selected_move_index(_cursor, 0), do: nil
+  defp selected_move_index(0, _length), do: nil
+  defp selected_move_index(cursor, length), do: min(cursor, length)
+
+  defp board_rows(_game, role, board_override) when is_list(board_override),
+    do: LiveChess.Games.Board.oriented(board_override, role)
+
+  defp board_rows(%{board: board}, role, _board_override) when is_list(board),
+    do: LiveChess.Games.Board.oriented(board, role)
+
+  defp board_rows(_game, _role, _board_override), do: []
+
+  defp viewing_live?(%{assigns: assigns}) do
+    viewing_live?(Map.get(assigns, :history_cursor, 0), Map.get(assigns, :history_length, 0))
+  end
+
+  defp viewing_live?(cursor, length) when is_integer(cursor) and is_integer(length),
+    do: cursor >= length
+
+  defp viewing_live?(_cursor, _length), do: true
 
   defp maybe_auto_join(socket, state) do
     cond do
@@ -280,7 +534,7 @@ defmodule LiveChessWeb.GameLive do
           {:ok, %{role: role, state: new_state}} ->
             socket
             |> assign(:role, role)
-            |> assign(:game, new_state)
+            |> set_game_state(new_state)
             |> assign(:error_message, nil)
 
           {:error, :slot_taken} ->
@@ -312,7 +566,13 @@ defmodule LiveChessWeb.GameLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div id="game-surface" phx-hook="SoundEffects" class="mx-auto max-w-6xl px-4 py-8">
+    <div
+      id="game-surface"
+      phx-hook="SoundEffects"
+      phx-window-keydown="escape_press"
+      phx-key="escape"
+      class="mx-auto max-w-6xl px-4 py-8"
+    >
       <div class="flex flex-col gap-6 lg:flex-row">
         <div class="flex-1">
           <%= if @board_ready? and @game do %>
@@ -333,7 +593,7 @@ defmodule LiveChessWeb.GameLive do
                   <%= if show_surrender_button?(@role, @game) do %>
                     <button
                       type="button"
-                      phx-click="surrender"
+                      phx-click="request_surrender"
                       class="inline-flex items-center gap-2 rounded-full border border-rose-300 px-3 py-1 text-sm font-medium text-rose-600 transition hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 dark:border-rose-500/60 dark:text-rose-200 dark:hover:bg-rose-900/30 dark:focus:ring-rose-400/70"
                     >
                       Surrender
@@ -345,7 +605,7 @@ defmodule LiveChessWeb.GameLive do
               <div class={"mt-2 text-sm " <> status_classes(@game)}>{status_line(@game)}</div>
 
               <div class="chess-board-grid">
-                <%= for row <- oriented_board(@game, @role) do %>
+                <%= for row <- board_rows(@game, @role, @board_override) do %>
                   <%= for cell <- row do %>
                     <button
                       type="button"
@@ -356,8 +616,9 @@ defmodule LiveChessWeb.GameLive do
                           @role,
                           cell,
                           @selected_square,
-                          @game.last_move,
-                          @available_moves
+                          @active_last_move,
+                          @available_moves,
+                          viewing_live?(@history_cursor, @history_length)
                         )
                       }
                     >
@@ -429,14 +690,55 @@ defmodule LiveChessWeb.GameLive do
           </div>
 
           <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Moves</h3>
-            <div class="mt-2 max-h-80 space-y-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
+            <div class="flex items-center justify-between">
+              <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Moves</h3>
+              <div class="flex items-center gap-2">
+                <.history_nav_button
+                  event="history_prev"
+                  label="‹"
+                  disabled={history_prev_disabled?(@history_cursor, @history_length)}
+                />
+                <.history_nav_button
+                  event="history_next"
+                  label="›"
+                  disabled={history_next_disabled?(@history_cursor, @history_length)}
+                />
+                <button
+                  type="button"
+                  phx-click="history_live"
+                  class={live_button_classes(@history_cursor, @history_length)}
+                >
+                  Live
+                </button>
+              </div>
+            </div>
+            <p class="mt-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+              {@history_caption}
+              <%= if @history_length > 0 do %>
+                <span class="ml-2 font-semibold text-slate-600 dark:text-slate-300">
+                  ({@history_cursor || @history_length}/{@history_length})
+                </span>
+              <% end %>
+            </p>
+            <div class="mt-3 max-h-80 space-y-1 overflow-y-auto text-sm text-slate-700 dark:text-slate-300">
               <%= if @game && @game.history != [] do %>
                 <%= for {move, index} <- Enum.with_index(@game.history, 1) do %>
-                  <div>
-                    <span class="font-semibold">{index}.</span>
-                    <span class="ml-2 font-mono">{move}</span>
-                  </div>
+                  <button
+                    type="button"
+                    phx-click="history_jump"
+                    phx-value-ply={index}
+                    class={move_row_class(index, @selected_move_index)}
+                  >
+                    <div class="flex items-center gap-3">
+                      <span class="font-semibold text-slate-600 dark:text-slate-300">{index}.</span>
+                      <span class="font-mono text-sm">{move}</span>
+                    </div>
+                    <%= if @selected_move_index == index do %>
+                      <span class="ml-3 text-xs font-semibold text-emerald-500">Viewing</span>
+                    <% else %>
+                      <span class="ml-3 text-xs text-transparent">Viewing</span>
+                    <% end %>
+                  </button>
                 <% end %>
               <% else %>
                 <p class="text-slate-500 dark:text-slate-400">No moves yet.</p>
@@ -485,6 +787,48 @@ defmodule LiveChessWeb.GameLive do
                 class="inline-flex items-center rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 disabled:opacity-60"
               >
                 Leave game
+              </button>
+            </div>
+          </div>
+        </div>
+      <% end %>
+      <%= if @show_surrender_modal do %>
+        <div class="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 backdrop-blur-sm">
+          <div
+            phx-click="cancel_surrender"
+            class="absolute inset-0 h-full w-full"
+            aria-hidden="true"
+          >
+          </div>
+          <div
+            class="relative z-10 w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-700 dark:bg-slate-900"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="surrender-game-title"
+          >
+            <h2
+              id="surrender-game-title"
+              class="text-lg font-semibold text-slate-900 dark:text-slate-100"
+            >
+              Surrender game?
+            </h2>
+            <p class="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              This will immediately resign and award the win to your opponent. You cannot undo this action.
+            </p>
+            <div class="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                phx-click="cancel_surrender"
+                class="inline-flex items-center rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:ring-slate-500"
+              >
+                Keep playing
+              </button>
+              <button
+                type="button"
+                phx-click="confirm_surrender"
+                class="inline-flex items-center rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 disabled:opacity-60"
+              >
+                Confirm surrender
               </button>
             </div>
           </div>
@@ -610,7 +954,7 @@ defmodule LiveChessWeb.GameLive do
   defp human_turn(:black), do: "Black"
   defp human_turn(_), do: "--"
 
-  defp square_classes(role, cell, selected, last_move, available_moves) do
+  defp square_classes(role, cell, selected, last_move, available_moves, live_view?) do
     base =
       [
         "chess-square",
@@ -624,7 +968,7 @@ defmodule LiveChessWeb.GameLive do
           do: "chess-square-capture",
           else: nil
         ),
-        if(clickable?(role, cell), do: "cursor-pointer", else: "cursor-default")
+        if(live_view? and clickable?(role, cell), do: "cursor-pointer", else: "cursor-default")
       ]
 
     Enum.reject(base, &is_nil/1)
@@ -743,6 +1087,74 @@ defmodule LiveChessWeb.GameLive do
   defp show_surrender_button?(role, %{status: :active}) when role in [:white, :black], do: true
 
   defp show_surrender_button?(_, _), do: false
+
+  defp live_button_classes(cursor, length) do
+    base =
+      "inline-flex items-center rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:ring-slate-500"
+
+    if viewing_live?(cursor, length) do
+      base <> " opacity-50 cursor-not-allowed hover:bg-transparent dark:hover:bg-transparent"
+    else
+      base
+    end
+  end
+
+  defp move_row_class(index, selected_index) do
+    base =
+      "flex items-center justify-between rounded-md px-3 py-2 text-slate-600 dark:text-slate-300 cursor-pointer transition-colors"
+
+    active = " bg-slate-100 text-slate-900 dark:bg-slate-800/60 dark:text-slate-100"
+    inactive = " hover:bg-slate-100 dark:hover:bg-slate-800/40"
+
+    if selected_index == index do
+      base <> active
+    else
+      base <> inactive
+    end
+  end
+
+  defp history_prev_disabled?(_cursor, length) when length <= 0, do: true
+  defp history_prev_disabled?(cursor, _length) when is_integer(cursor) and cursor <= 0, do: true
+  defp history_prev_disabled?(_cursor, _length), do: false
+
+  defp history_next_disabled?(_cursor, length) when length <= 0, do: true
+
+  defp history_next_disabled?(cursor, length) when is_integer(cursor) and cursor >= length,
+    do: true
+
+  defp history_next_disabled?(_cursor, _length), do: false
+
+  attr :event, :string, required: true
+  attr :label, :string, required: true
+  attr :disabled, :boolean, default: false
+
+  defp history_nav_button(assigns) do
+    classes =
+      "inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:ring-slate-500"
+
+    assigns =
+      assign(
+        assigns,
+        :classes,
+        if(assigns.disabled,
+          do:
+            classes <>
+              " opacity-50 cursor-not-allowed hover:bg-transparent dark:hover:bg-transparent",
+          else: classes
+        )
+      )
+
+    ~H"""
+    <button
+      type="button"
+      phx-click={@event}
+      class={@classes}
+      disabled={@disabled}
+    >
+      {@label}
+    </button>
+    """
+  end
 
   defp show_move_dot?(available_moves, %{id: id, piece: nil}, _role) do
     available_moves && MapSet.member?(available_moves, id)
