@@ -1,5 +1,87 @@
 import Config
 
+if stockfish_url = System.get_env("STOCKFISH_API_URL") do
+  config :live_chess, LiveChess.Engines.Stockfish, base_url: stockfish_url
+end
+
+if stockfish_token = System.get_env("STOCKFISH_API_TOKEN") do
+  config :live_chess, LiveChess.Engines.Stockfish, api_token: stockfish_token
+end
+
+if stockfish_multi_pv = System.get_env("STOCKFISH_MULTI_PV") do
+  case Integer.parse(stockfish_multi_pv) do
+    {multi_pv, _} when multi_pv > 0 ->
+      config :live_chess, LiveChess.Engines.Stockfish, multi_pv: multi_pv
+
+    _ ->
+      :ok
+  end
+end
+
+if stockfish_timeout = System.get_env("STOCKFISH_TIMEOUT_MS") do
+  case Integer.parse(stockfish_timeout) do
+    {timeout_ms, _} when timeout_ms > 0 ->
+      config :live_chess, LiveChess.Engines.Stockfish, request_timeout: timeout_ms
+
+    _ ->
+      :ok
+  end
+end
+
+if stockfish_enabled = System.get_env("STOCKFISH_ENABLED") do
+  flag = String.downcase(stockfish_enabled) in ["1", "true", "yes"]
+  config :live_chess, LiveChess.Engines.Stockfish, enabled?: flag
+end
+
+if chess_api_url = System.get_env("CHESS_API_URL") do
+  config :live_chess, LiveChess.Engines.ChessApi, base_url: chess_api_url
+end
+
+if chess_api_variants = System.get_env("CHESS_API_VARIANTS") do
+  case Integer.parse(chess_api_variants) do
+    {variants, _} when variants >= 1 and variants <= 5 ->
+      config :live_chess, LiveChess.Engines.ChessApi, variants: variants
+
+    _ ->
+      :ok
+  end
+end
+
+if chess_api_depth = System.get_env("CHESS_API_DEPTH") do
+  case Integer.parse(chess_api_depth) do
+    {depth, _} when depth > 0 ->
+      config :live_chess, LiveChess.Engines.ChessApi, depth: depth
+
+    _ ->
+      :ok
+  end
+end
+
+if chess_api_thinking = System.get_env("CHESS_API_THINKING_MS") do
+  case Integer.parse(chess_api_thinking) do
+    {thinking_ms, _} when thinking_ms > 0 ->
+      config :live_chess, LiveChess.Engines.ChessApi, max_thinking_time: thinking_ms
+
+    _ ->
+      :ok
+  end
+end
+
+if chess_api_timeout = System.get_env("CHESS_API_TIMEOUT_MS") do
+  case Integer.parse(chess_api_timeout) do
+    {timeout_ms, _} when timeout_ms > 0 ->
+      config :live_chess, LiveChess.Engines.ChessApi, request_timeout: timeout_ms
+
+    _ ->
+      :ok
+  end
+end
+
+if chess_api_enabled = System.get_env("CHESS_API_ENABLED") do
+  flag = String.downcase(chess_api_enabled) in ["1", "true", "yes"]
+  config :live_chess, LiveChess.Engines.ChessApi, enabled?: flag
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

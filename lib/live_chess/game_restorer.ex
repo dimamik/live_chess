@@ -11,7 +11,9 @@ defmodule LiveChess.GameRestorer do
 
   @impl true
   def init(:ok) do
-    Storage.list_room_ids()
+    DateTime.utc_now()
+    |> DateTime.add(-15 * 60, :second)
+    |> Storage.list_room_ids()
     |> Enum.each(&GameSupervisor.start_game/1)
 
     {:ok, :ok}

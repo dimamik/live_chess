@@ -10,6 +10,8 @@ config :live_chess, LiveChess.Repo,
   pool_size: 10
 
 config :live_chess, enable_game_restorer: false
+config :live_chess, LiveChess.Engines.Stockfish, enabled?: false
+config :live_chess, LiveChess.Engines.ChessApi, enabled?: false
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.

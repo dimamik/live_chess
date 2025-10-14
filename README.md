@@ -8,6 +8,7 @@ Multiplayer chess built with Phoenix LiveView. Players can spin up an ad-hoc roo
 - Live lobby for creating rooms, joining by code, and sharing invite links
 - Real-time board updates, move validation, and basic move history powered by the `chess` Hex package
 - Automatic session token issuance so visitors can reconnect to their seat without accounts
+- Remote engine-backed evaluation and robot moves via https://chess-api.com/, with Stockfish Cloud Eval support available via configuration and heuristics as a fallback
 
 ## Getting started
 
@@ -28,6 +29,22 @@ Multiplayer chess built with Phoenix LiveView. Players can spin up an ad-hoc roo
 - All game state lives in memory. `LiveChess.GameSupervisor` and `LiveChess.GameServer` coordinate lifecycle and move validation.
 - Game topics are broadcast over `Phoenix.PubSub`, allowing LiveViews to stay synced without manual polling.
 - The UI uses TailwindCSS utility classes that ship with new Phoenix projects—no external CSS framework required.
+
+## Engine configuration
+
+The application uses a pluggable engine behaviour (`LiveChess.Engines.Engine`). By default, it talks to [chess-api.com](https://chess-api.com/) for Stockfish 17 evaluations. The legacy Lichess Cloud Eval client is still available and can be re-enabled if preferred.
+
+| Variable                | Purpose                                                           | Default                    |
+| ----------------------- | ----------------------------------------------------------------- | -------------------------- |
+| `CHESS_API_URL`         | Override the chess-api.com endpoint                               | `https://chess-api.com/v1` |
+| `CHESS_API_VARIANTS`    | Number of principal variations (1-5)                              | `1`                        |
+| `CHESS_API_DEPTH`       | Search depth (1+)                                                 | `12`                       |
+| `CHESS_API_THINKING_MS` | Thinking time budget per request                                  | `50`                       |
+| `CHESS_API_TIMEOUT_MS`  | HTTP request timeout                                              | `8000`                     |
+| `CHESS_API_ENABLED`     | Disable the remote engine when set to `false`/`0`                 | `true`                     |
+| `STOCKFISH_*`           | Existing Stockfish Cloud Eval overrides (see `config/config.exs`) | _optional_                 |
+
+Switch `config :live_chess, :engine` to `LiveChess.Engines.Stockfish` if you want to revert to the Lichess client. When the engine is disabled or unavailable, the server falls back to the built-in heuristic evaluator and a simple random-move robot so that gameplay can continue offline.
 
 ## Next steps
 

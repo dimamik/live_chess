@@ -2,9 +2,11 @@ defmodule LiveChess.GameServer do
   @moduledoc false
 
   use GenServer
+  require Logger
 
   alias Chess.Game, as: ChessGame
   alias LiveChess.Analysis.Evaluator
+  alias LiveChess.Engines
   alias LiveChess.Games.{Notation, Storage}
 
   @type room_id :: String.t()
@@ -622,7 +624,8 @@ defmodule LiveChess.GameServer do
   defp perform_robot_move(%{robot: %{color: color}} = state) do
     with true <- state.status == :active,
          true <- current_turn(state.game.current_fen) == color,
-         {:ok, %{from: from, to: to, promotion: promotion}} <- robot_pick_move(state.game, color),
+         {:ok, %{from: from, to: to, promotion: promotion} = robot_move} <-
+           robot_pick_move(state.game, color),
          {:ok, game} <- ChessGame.play(state.game, String.downcase("#{from}-#{to}"), promotion) do
       updated =
         state
@@ -632,7 +635,9 @@ defmodule LiveChess.GameServer do
           to: to,
           promotion: promotion,
           color: color,
-          robot?: true
+          robot?: true,
+          engine: Map.get(robot_move, :engine),
+          uci: Map.get(robot_move, :uci)
         })
         |> maybe_finish(game)
         |> maybe_queue_robot_move()
@@ -646,7 +651,26 @@ defmodule LiveChess.GameServer do
 
   defp perform_robot_move(state), do: {:ok, state}
 
-  defp robot_pick_move(game, color) do
+  defp robot_pick_move(%ChessGame{} = game, color) do
+    case Engines.best_move(game.current_fen, color: color) do
+      {:ok, move} ->
+        normalize_engine_move(move)
+
+      {:error, :disabled} ->
+        robot_pick_move_from_candidates(game, color)
+
+      {:error, reason} ->
+        Logger.warning(fn ->
+          "Engine best_move failed for robot (#{inspect(reason)}); falling back to legal random move"
+        end)
+
+        robot_pick_move_from_candidates(game, color)
+    end
+  end
+
+  defp robot_pick_move(_game, _color), do: {:error, :no_moves}
+
+  defp robot_pick_move_from_candidates(game, color) do
     game
     |> robot_move_candidates(color)
     |> case do
@@ -655,6 +679,24 @@ defmodule LiveChess.GameServer do
     end
   end
 
+  defp normalize_engine_move(%{from: from, to: to} = move)
+       when is_binary(from) and is_binary(to) do
+    promotion =
+      case Map.get(move, :promotion) do
+        nil -> "q"
+        value -> value |> to_string() |> String.downcase()
+      end
+
+    {:ok,
+     move
+     |> Map.put(:from, String.downcase(from))
+     |> Map.put(:to, String.downcase(to))
+     |> Map.put(:promotion, promotion)
+     |> Map.put_new(:engine, Engines.source())}
+  end
+
+  defp normalize_engine_move(_), do: {:error, :invalid_move}
+
   defp robot_move_candidates(game, color) do
     for file <- ?a..?h,
         rank <- ?1..?8,
@@ -662,7 +704,16 @@ defmodule LiveChess.GameServer do
         {:ok, piece} <- [fetch_piece(game, square)],
         robot_piece?(piece, color),
         dest <- legal_moves_for(game, square) do
-      %{from: String.downcase(square), to: dest, promotion: robot_promotion(piece, dest)}
+      from_square = String.downcase(square)
+      dest_square = String.downcase(dest)
+
+      %{
+        from: from_square,
+        to: dest_square,
+        promotion: robot_promotion(piece, dest_square),
+        engine: :random,
+        uci: from_square <> dest_square
+      }
     end
   end
 

@@ -25,12 +25,14 @@ defmodule LiveChess.GamesTest do
              } = state.evaluation
 
       assert is_number(percent)
+      assert state.evaluation.source in [:heuristic, :stockfish, :chess_api, :none]
 
       guest_token = Games.generate_player_token()
       assert {:ok, %{role: :black}} = Games.join_game(room_id, guest_token)
       assert {:ok, %{state: state_after_join}} = Games.connect(room_id, guest_token)
       assert state_after_join.status == :active
       assert is_map(state_after_join.evaluation)
+      assert state_after_join.evaluation.source in [:heuristic, :stockfish, :chess_api, :none]
 
       assert {:ok, %{state: move_state}} = Games.make_move(room_id, host_token, "e2", "e4")
       assert move_state.history == ["e4"]

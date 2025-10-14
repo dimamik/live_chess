@@ -44,6 +44,10 @@ defmodule LiveChess.Games.Storage do
     Repo.all(from(r in GameRecord, select: r.room_id))
   end
 
+  def list_room_ids(since_datetime) when is_struct(since_datetime, DateTime) do
+    Repo.all(from(r in GameRecord, where: r.updated_at >= ^since_datetime, select: r.room_id))
+  end
+
   def exists?(room_id) when is_binary(room_id) do
     Repo.exists?(from(r in GameRecord, where: r.room_id == ^room_id))
   end

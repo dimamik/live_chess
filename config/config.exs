@@ -61,6 +61,24 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+config :live_chess, :engine, LiveChess.Engines.ChessApi
+
+config :live_chess, LiveChess.Engines.Stockfish,
+  base_url: "https://lichess.org/api/cloud-eval",
+  multi_pv: 3,
+  request_timeout: 8_000,
+  retry: :safe_transient,
+  enabled?: true
+
+config :live_chess, LiveChess.Engines.ChessApi,
+  base_url: "https://chess-api.com/v1",
+  variants: 1,
+  depth: 12,
+  max_thinking_time: 50,
+  request_timeout: 8_000,
+  retry: :safe_transient,
+  enabled?: true
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

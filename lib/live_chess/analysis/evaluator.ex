@@ -9,7 +9,10 @@ defmodule LiveChess.Analysis.Evaluator do
   """
 
   alias Chess.Game
+  alias LiveChess.Engines
   alias MapSet
+
+  require Logger
 
   @piece_values %{
     "p" => 100,
@@ -112,7 +115,95 @@ defmodule LiveChess.Analysis.Evaluator do
         }
 
   @spec summary(%{game: Game.t(), status: atom()}, :white | :black | nil) :: evaluation()
-  def summary(%{game: %Game{} = game, status: status}, winner) do
+  def summary(%{game: %Game{} = game, status: status} = state, winner) do
+    case engine_summary(game, status, winner) do
+      {:ok, evaluation} -> evaluation
+      {:error, _reason} -> heuristic_summary(state, winner)
+    end
+  end
+
+  def summary(state, winner), do: heuristic_summary(state, winner)
+
+  defp engine_summary(%Game{} = game, status, winner) do
+    case Engines.evaluate(game.current_fen) do
+      {:ok, evaluation} ->
+        {:ok, build_engine_summary(evaluation, status, winner)}
+
+      {:error, :disabled} ->
+        {:error, :disabled}
+
+      {:error, reason} ->
+        log_engine_error(reason)
+        {:error, reason}
+    end
+  end
+
+  defp engine_summary(_, _status, _winner), do: {:error, :invalid_state}
+
+  defp build_engine_summary(evaluation, status, winner) do
+    raw_score = Map.get(evaluation, :normalized_cp) || Map.get(evaluation, :score_cp, 0)
+    score_cp = raw_score |> clamp_score()
+    mate = Map.get(evaluation, :normalized_mate) || Map.get(evaluation, :mate)
+    source = Map.get(evaluation, :source, Engines.source())
+    engine_name = Map.get(evaluation, :engine_name, engine_label(source))
+
+    advantage =
+      cond do
+        winner in [:white, :black] -> winner
+        is_integer(mate) and mate != 0 -> if mate > 0, do: :white, else: :black
+        score_cp > 40 -> :white
+        score_cp < -40 -> :black
+        true -> :equal
+      end
+
+    display_score =
+      cond do
+        winner == :white ->
+          "+M"
+
+        winner == :black ->
+          "-M"
+
+        is_integer(mate) and mate != 0 ->
+          prefix = if mate > 0, do: "+M", else: "-M"
+          prefix <> Integer.to_string(abs(mate))
+
+        true ->
+          format_score(score_cp)
+      end
+
+    white_percentage =
+      cond do
+        winner == :white -> 100.0
+        winner == :black -> 0.0
+        status in [:stalemate, :draw] -> 50.0
+        is_integer(mate) and mate != 0 -> if mate > 0, do: 100.0, else: 0.0
+        true -> clamp_to_percentage(score_cp)
+      end
+
+    base = %{
+      score_cp: score_cp,
+      display_score: display_score,
+      white_percentage: Float.round(white_percentage, 2),
+      advantage: advantage,
+      source: source,
+      engine: %{
+        name: engine_name,
+        depth: Map.get(evaluation, :depth),
+        knodes: Map.get(evaluation, :knodes),
+        best_move: Map.get(evaluation, :best_move),
+        lines: Map.get(evaluation, :lines),
+        raw: Map.get(evaluation, :raw)
+      }
+    }
+
+    case mate do
+      value when is_integer(value) and value != 0 -> Map.put(base, :mate_in, value)
+      _ -> base
+    end
+  end
+
+  defp heuristic_summary(%{game: %Game{} = game, status: status}, winner) do
     raw_score =
       case winner do
         :white -> @score_cap
@@ -149,18 +240,36 @@ defmodule LiveChess.Analysis.Evaluator do
       score_cp: score_cp,
       display_score: display_score,
       white_percentage: Float.round(white_percentage, 2),
-      advantage: advantage
+      advantage: advantage,
+      source: :heuristic
     }
   end
 
-  def summary(_state, _winner) do
+  defp heuristic_summary(_state, _winner), do: default_evaluation()
+
+  defp default_evaluation do
     %{
       score_cp: 0,
       display_score: "0.00",
       white_percentage: 50.0,
-      advantage: :equal
+      advantage: :equal,
+      source: :none
     }
   end
+
+  defp log_engine_error(:disabled), do: :ok
+
+  defp log_engine_error(reason) do
+    Logger.warning(fn -> "Engine evaluation failed: #{inspect(reason)}" end)
+  end
+
+  defp engine_label(:chess_api), do: "Chess API"
+  defp engine_label(:stockfish), do: "Stockfish"
+
+  defp engine_label(other) when is_atom(other),
+    do: Atom.to_string(other) |> String.replace("_", " ")
+
+  defp engine_label(_), do: "Engine"
 
   @spec evaluate(Game.t()) :: integer()
   def evaluate(%Game{} = game) do

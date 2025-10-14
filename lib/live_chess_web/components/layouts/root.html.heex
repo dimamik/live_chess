@@ -8,9 +8,35 @@
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
-    <link phx-track-static rel="icon" type="image/svg+xml" href={~p"/favicon.svg"} />
-    <link phx-track-static rel="alternate icon" type="image/x-icon" href={~p"/favicon.ico"} />
-    <link phx-track-static rel="shortcut icon" href={~p"/favicon.ico"} />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="apple-mobile-web-app-title" content="LiveChess" />
+    <link
+      phx-track-static
+      rel="icon"
+      type="image/svg+xml"
+      href={~p"/images/favicons/favicon.svg"}
+    />
+    <link
+      phx-track-static
+      rel="icon"
+      type="image/png"
+      sizes="32x32"
+      href={~p"/images/favicons/favicon-32x32.png"}
+    />
+    <link
+      phx-track-static
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href={~p"/images/favicons/apple-touch-icon.png"}
+    />
+    <link phx-track-static rel="manifest" href={~p"/site.webmanifest"} />
+    <link
+      phx-track-static
+      rel="alternate icon"
+      type="image/x-icon"
+      href={~p"/images/favicons/favicon.ico"}
+    />
+    <link phx-track-static rel="shortcut icon" href={~p"/images/favicons/favicon.ico"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
     <script>
