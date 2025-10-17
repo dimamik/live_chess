@@ -101,7 +101,7 @@ defmodule LiveChess.GameServer do
     color = first_available_color(state)
 
     with {:ok, state} <- ensure_slot(state, token, color) do
-      broadcast(state)
+      state = broadcast(state)
       {:reply, {:ok, payload(state, token, color)}, state}
     end
   end
@@ -121,15 +121,23 @@ defmodule LiveChess.GameServer do
           token: robot_token,
           connected?: true,
           robot?: true,
-          name: "Robot"
+          name: "Robot",
+          strategy: :engine
         }
 
-        robot_state = %{color: color, token: robot_token, delay_ms: 700}
+        robot_state = %{
+          color: color,
+          token: robot_token,
+          delay_ms: 700,
+          mode: :engine,
+          last_error: nil
+        }
 
         state =
           state
           |> put_in([:players, color], robot_player)
           |> Map.put(:robot, robot_state)
+          |> sync_robot_strategy()
 
         state = maybe_activate(state)
         state = maybe_queue_robot_move(state)
@@ -147,7 +155,7 @@ defmodule LiveChess.GameServer do
       player?(state, token) ->
         color = color_for(state, token)
         updated = put_in(state, [:players, color, :connected?], true)
-        maybe_broadcast(state, updated)
+        updated = maybe_broadcast(state, updated)
         {:reply, {:ok, payload(updated, token, color)}, updated}
 
       true ->
@@ -165,7 +173,7 @@ defmodule LiveChess.GameServer do
       player?(state, token) ->
         color = color_for(state, token)
         updated = put_in(state, [:players, color, :connected?], true)
-        maybe_broadcast(state, updated)
+        updated = maybe_broadcast(state, updated)
         {:reply, {:ok, payload(updated, token, color)}, updated}
 
       MapSet.member?(state.spectators, token) ->
@@ -182,7 +190,7 @@ defmodule LiveChess.GameServer do
   def handle_call({:spectator, token}, _from, state) do
     spectators = MapSet.put(state.spectators, token)
     updated = %{state | spectators: spectators}
-    maybe_broadcast(state, updated)
+    updated = maybe_broadcast(state, updated)
     {:reply, {:ok, payload(updated, token, :spectator)}, updated}
   end
 
@@ -218,7 +226,7 @@ defmodule LiveChess.GameServer do
         |> maybe_finish(game)
         |> maybe_queue_robot_move()
 
-      broadcast(updated)
+      updated = broadcast(updated)
       {:reply, {:ok, payload(updated, token, color)}, updated}
     else
       {:player, _} -> {:reply, {:error, :game_not_active}, state}
@@ -241,7 +249,7 @@ defmodule LiveChess.GameServer do
         |> Map.put(:last_move, %{action: :resigned, color: color})
         |> cancel_robot_timer()
 
-      broadcast(updated)
+      updated = broadcast(updated)
       {:reply, {:ok, payload(updated, token, color)}, updated}
     else
       :spectator -> {:reply, {:error, :not_authorized}, state}
@@ -251,6 +259,7 @@ defmodule LiveChess.GameServer do
   end
 
   def handle_call(:state, _from, state) do
+    state = ensure_analysis(state)
     {:reply, serialize(state), state}
   end
 
@@ -260,7 +269,7 @@ defmodule LiveChess.GameServer do
 
     case perform_robot_move(state) do
       {:ok, updated} -> {:noreply, updated}
-      {:error, _reason} -> {:noreply, state}
+      {:error, _reason, updated} -> {:noreply, updated}
     end
   end
 
@@ -272,12 +281,10 @@ defmodule LiveChess.GameServer do
           color = color_for(state, token)
           updated = put_in(state, [:players, color, :connected?], false)
           maybe_broadcast(state, updated)
-          updated
 
         true ->
           updated = %{state | spectators: MapSet.delete(state.spectators, token)}
           maybe_broadcast(state, updated)
-          updated
       end
 
     {:noreply, state}
@@ -327,10 +334,8 @@ defmodule LiveChess.GameServer do
     if state.players.white && state.players.black do
       updated = %{state | status: :active, winner: nil}
       broadcast(updated)
-      updated
     else
       broadcast(state)
-      state
     end
   end
 
@@ -412,20 +417,26 @@ defmodule LiveChess.GameServer do
   end
 
   defp broadcast(state) do
+    state = ensure_analysis(state)
     sanitized = persistable_state(state)
+    serialized = serialize(state)
 
     _ = Storage.persist_state(sanitized)
 
     Phoenix.PubSub.broadcast(
       LiveChess.PubSub,
       topic(state.room_id),
-      {:game_state, serialize(state)}
+      {:game_state, serialized}
     )
+
+    state
   end
 
   defp maybe_broadcast(old_state, new_state) do
     if new_state != old_state do
       broadcast(new_state)
+    else
+      new_state
     end
   end
 
@@ -434,6 +445,37 @@ defmodule LiveChess.GameServer do
   end
 
   defp serialize(state) do
+    outcome = derive_outcome(state)
+
+    evaluation =
+      Map.get(state, :evaluation) ||
+        Evaluator.summary(state, outcome.winner)
+
+    {timeline, initial_fen} = build_timeline(state.game.history, state.game.current_fen)
+    annotated_history = Notation.annotate(timeline)
+
+    %{
+      room_id: state.room_id,
+      status: state.status,
+      winner: outcome.winner,
+      checking_color: outcome.checking_color,
+      in_check: outcome.in_check,
+      robot_mode: Map.get(state.robot || %{}, :mode),
+      players: serialize_players(state.players),
+      last_move: state.last_move,
+      board: LiveChess.Games.Board.from_game(state.game),
+      turn: current_turn(state.game.current_fen),
+      history: Enum.map(annotated_history, & &1.san),
+      history_moves: annotated_history,
+      timeline: timeline,
+      initial_fen: initial_fen,
+      current_fen: state.game.current_fen,
+      evaluation: evaluation,
+      spectator_count: MapSet.size(state.spectators)
+    }
+  end
+
+  defp derive_outcome(state) do
     checking_color =
       case state.game.check do
         "w" -> :white
@@ -456,28 +498,7 @@ defmodule LiveChess.GameServer do
           _ -> nil
         end
 
-    evaluation = Evaluator.summary(state, winner)
-    {timeline, initial_fen} = build_timeline(state.game.history, state.game.current_fen)
-    annotated_history = Notation.annotate(timeline)
-
-    %{
-      room_id: state.room_id,
-      status: state.status,
-      winner: winner,
-      checking_color: checking_color,
-      in_check: in_check,
-      players: serialize_players(state.players),
-      last_move: state.last_move,
-      board: LiveChess.Games.Board.from_game(state.game),
-      turn: current_turn(state.game.current_fen),
-      history: Enum.map(annotated_history, & &1.san),
-      history_moves: annotated_history,
-      timeline: timeline,
-      initial_fen: initial_fen,
-      current_fen: state.game.current_fen,
-      evaluation: evaluation,
-      spectator_count: MapSet.size(state.spectators)
-    }
+    %{checking_color: checking_color, in_check: in_check, winner: winner}
   end
 
   defp serialize_players(players) do
@@ -494,7 +515,9 @@ defmodule LiveChess.GameServer do
 
     base =
       if Map.get(player, :robot?) do
-        Map.put(base, :robot?, true)
+        base
+        |> Map.put(:robot?, true)
+        |> maybe_put_strategy(Map.get(player, :strategy))
       else
         base
       end
@@ -504,6 +527,36 @@ defmodule LiveChess.GameServer do
       name -> Map.put(base, :name, name)
     end
   end
+
+  defp maybe_put_strategy(map, nil), do: map
+  defp maybe_put_strategy(map, strategy), do: Map.put(map, :strategy, strategy)
+
+  defp ensure_analysis(state) do
+    fen = game_fen(state)
+    outcome = derive_outcome(state)
+
+    if analysis_stale?(state, fen, outcome.winner) do
+      evaluation = Evaluator.summary(state, outcome.winner)
+
+      state
+      |> Map.put(:evaluation, evaluation)
+      |> Map.put(:evaluation_fen, fen)
+      |> Map.put(:evaluation_status, state.status)
+      |> Map.put(:evaluation_winner, outcome.winner)
+    else
+      state
+    end
+  end
+
+  defp analysis_stale?(state, fen, winner) do
+    Map.get(state, :evaluation) == nil ||
+      Map.get(state, :evaluation_fen) != fen ||
+      Map.get(state, :evaluation_status) != state.status ||
+      Map.get(state, :evaluation_winner) != winner
+  end
+
+  defp game_fen(%{game: %ChessGame{current_fen: fen}}) when is_binary(fen), do: fen
+  defp game_fen(_), do: nil
 
   defp first_available_color(state) do
     cond do
@@ -530,7 +583,11 @@ defmodule LiveChess.GameServer do
       last_move: nil,
       winner: nil,
       robot: nil,
-      robot_timer: nil
+      robot_timer: nil,
+      evaluation: nil,
+      evaluation_fen: nil,
+      evaluation_status: nil,
+      evaluation_winner: nil
     }
   end
 
@@ -545,6 +602,11 @@ defmodule LiveChess.GameServer do
     |> Map.put_new(:winner, nil)
     |> Map.put_new(:robot, nil)
     |> Map.put(:robot_timer, nil)
+    |> Map.put_new(:evaluation, nil)
+    |> Map.put_new(:evaluation_fen, nil)
+    |> Map.put_new(:evaluation_status, nil)
+    |> Map.put_new(:evaluation_winner, nil)
+    |> sync_robot_strategy()
   end
 
   defp hydrate_state(_state, room_id), do: new_state(room_id)
@@ -622,60 +684,88 @@ defmodule LiveChess.GameServer do
   end
 
   defp perform_robot_move(%{robot: %{color: color}} = state) do
-    with true <- state.status == :active,
-         true <- current_turn(state.game.current_fen) == color,
-         {:ok, %{from: from, to: to, promotion: promotion} = robot_move} <-
-           robot_pick_move(state.game, color),
-         {:ok, game} <- ChessGame.play(state.game, String.downcase("#{from}-#{to}"), promotion) do
-      updated =
-        state
-        |> Map.put(:game, game)
-        |> Map.put(:last_move, %{
-          from: from,
-          to: to,
-          promotion: promotion,
-          color: color,
-          robot?: true,
-          engine: Map.get(robot_move, :engine),
-          uci: Map.get(robot_move, :uci)
-        })
-        |> maybe_finish(game)
-        |> maybe_queue_robot_move()
+    cond do
+      state.status != :active ->
+        {:error, :inactive, state}
 
-      broadcast(updated)
-      {:ok, updated}
-    else
-      _ -> {:error, :unable_to_move}
+      current_turn(state.game.current_fen) != color ->
+        {:error, :not_robot_turn, state}
+
+      true ->
+        case robot_pick_move(state) do
+          {:ok, %{from: from, to: to, promotion: promotion} = robot_move, state} ->
+            case ChessGame.play(state.game, String.downcase("#{from}-#{to}"), promotion) do
+              {:ok, game} ->
+                updated =
+                  state
+                  |> Map.put(:game, game)
+                  |> Map.put(:last_move, %{
+                    from: from,
+                    to: to,
+                    promotion: promotion,
+                    color: color,
+                    robot?: true,
+                    engine: Map.get(robot_move, :engine),
+                    uci: Map.get(robot_move, :uci)
+                  })
+                  |> maybe_finish(game)
+                  |> maybe_queue_robot_move()
+
+                updated = broadcast(updated)
+                {:ok, updated}
+
+              {:error, reason} ->
+                state = update_robot_strategy(state, :random, reason: reason)
+                {:error, reason, state}
+            end
+
+          {:error, reason, state} ->
+            {:error, reason, state}
+        end
     end
   end
 
   defp perform_robot_move(state), do: {:ok, state}
 
-  defp robot_pick_move(%ChessGame{} = game, color) do
+  defp robot_pick_move(%{game: %ChessGame{} = game, robot: %{color: color}} = state) do
     case Engines.best_move(game.current_fen, color: color) do
       {:ok, move} ->
-        normalize_engine_move(move)
+        case normalize_engine_move(move) do
+          {:ok, normalized} ->
+            state = update_robot_strategy(state, :engine, reason: nil)
+            {:ok, normalized, state}
+
+          {:error, _} ->
+            robot_pick_move_from_candidates(state, :invalid_move)
+        end
 
       {:error, :disabled} ->
-        robot_pick_move_from_candidates(game, color)
+        robot_pick_move_from_candidates(state, :disabled)
 
       {:error, reason} ->
         Logger.warning(fn ->
           "Engine best_move failed for robot (#{inspect(reason)}); falling back to legal random move"
         end)
 
-        robot_pick_move_from_candidates(game, color)
+        robot_pick_move_from_candidates(state, reason)
     end
   end
 
-  defp robot_pick_move(_game, _color), do: {:error, :no_moves}
+  defp robot_pick_move(state), do: {:error, :no_moves, state}
 
-  defp robot_pick_move_from_candidates(game, color) do
-    game
-    |> robot_move_candidates(color)
-    |> case do
-      [] -> {:error, :no_moves}
-      moves -> {:ok, Enum.random(moves)}
+  defp robot_pick_move_from_candidates(
+         %{game: %ChessGame{} = game, robot: %{color: color}} = state,
+         reason
+       ) do
+    case robot_move_candidates(game, color) do
+      [] ->
+        state = update_robot_strategy(state, :random, reason: reason)
+        {:error, :no_moves, state}
+
+      moves ->
+        move = Enum.random(moves)
+        state = update_robot_strategy(state, :random, reason: reason)
+        {:ok, move, state}
     end
   end
 
@@ -738,6 +828,58 @@ defmodule LiveChess.GameServer do
   end
 
   defp robot_promotion(_piece, _destination), do: "q"
+
+  defp sync_robot_strategy(%{robot: nil} = state), do: state
+
+  defp sync_robot_strategy(%{robot: robot} = state) when is_map(robot) do
+    robot =
+      robot
+      |> Map.put_new(:mode, :engine)
+      |> Map.put_new(:last_error, nil)
+
+    state
+    |> Map.put(:robot, robot)
+    |> put_robot_player_strategy(Map.get(robot, :mode))
+  end
+
+  defp sync_robot_strategy(state), do: state
+
+  defp update_robot_strategy(%{robot: nil} = state, _mode, _opts), do: state
+
+  defp update_robot_strategy(%{robot: robot} = state, mode, opts) when is_map(robot) do
+    reason = Keyword.get(opts, :reason, Map.get(robot, :last_error))
+
+    robot =
+      robot
+      |> Map.put(:mode, mode)
+      |> Map.put(:last_error, reason)
+
+    state
+    |> Map.put(:robot, robot)
+    |> put_robot_player_strategy(mode)
+  end
+
+  defp update_robot_strategy(state, _mode, _opts), do: state
+
+  defp put_robot_player_strategy(%{robot: %{color: color}} = state, mode) do
+    players = Map.get(state, :players, %{})
+
+    updated_players =
+      case Map.fetch(players, color) do
+        {:ok, nil} ->
+          players
+
+        {:ok, player} when is_map(player) ->
+          Map.put(players, color, player |> Map.put(:robot?, true) |> Map.put(:strategy, mode))
+
+        :error ->
+          players
+      end
+
+    %{state | players: updated_players}
+  end
+
+  defp put_robot_player_strategy(state, _mode), do: state
 
   defp persistable_state(state) do
     state

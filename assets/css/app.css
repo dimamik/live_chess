@@ -143,10 +143,10 @@
     --piece-white-shadow: #c5d2ed;
     --piece-white-outline: #1f2d3f;
     --piece-white-highlight: #ffffff;
-    --piece-black-fill: #141b27;
-    --piece-black-shadow: #0c111b;
-    --piece-black-outline: #b7c4eb;
-    --piece-black-highlight: #2a3547;
+    --piece-black-fill: #45505e;
+    --piece-black-shadow: #2b333f;
+    --piece-black-outline: #101621;
+    --piece-black-highlight: #5e6a7b;
   }
 
   body {
@@ -219,6 +219,9 @@
     overflow: hidden;
     border: 1px solid var(--board-outline);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+    width: min(100%, clamp(340px, 90vw, 640px));
+    margin-left: auto;
+    margin-right: auto;
   }
 
   .chess-square {
@@ -351,8 +354,8 @@
     width: 100%;
     align-items: center;
     justify-content: center;
-    padding: 0.2rem;
-    filter: drop-shadow(0 6px 10px rgba(15, 23, 42, 0.28));
+    padding: clamp(0.05rem, 0.9vw, 0.2rem);
+    filter: drop-shadow(0 4px 10px rgba(15, 23, 42, 0.2));
   }
 
   .move-dot {
@@ -371,9 +374,10 @@
   }
 
   .piece-svg {
+    display: block;
     width: 100%;
-    height: 100%;
-    max-width: 60px;
+    height: auto;
+    max-width: none;
   }
 
   .piece-body,
@@ -419,11 +423,31 @@
     --piece-highlight: var(--piece-white-highlight);
   }
 
+  @media (max-width: 640px) {
+    .chess-board-panel {
+      padding: clamp(0.75rem, 4vw, 1.25rem);
+    }
+
+    .piece-wrapper {
+      padding: clamp(0.05rem, 1vw, 0.15rem);
+      filter: drop-shadow(0 3px 8px rgba(15, 23, 42, 0.18));
+    }
+  }
+
   .piece-black {
     --piece-fill: var(--piece-black-fill);
     --piece-shadow: var(--piece-black-shadow);
     --piece-outline: var(--piece-black-outline);
     --piece-highlight: var(--piece-black-highlight);
+  }
+
+  /* Override inline SVG styles for black pieces */
+  .piece-black .st1 {
+    fill: #010101 !important;
+  }
+
+  .piece-black .st2 {
+    fill: #6d6e6e !important;
   }
 
   .endgame-overlay {
@@ -538,8 +562,8 @@
   .endgame-tear {
     position: absolute;
     top: -10%;
-    width: 0.85rem;
-    height: 1.6rem;
+    width: var(--particle-width, 0.85rem);
+    height: var(--particle-height, 1.6rem);
     border-radius: 0.25rem;
     opacity: 0;
     pointer-events: none;
@@ -550,13 +574,15 @@
     animation-delay: var(--confetti-delay, 0s);
     left: var(--confetti-left, 50%);
     background: var(--confetti-color, #fbbf24);
+    width: var(--confetti-size, var(--particle-width, 0.85rem));
+    height: calc(var(--confetti-size, var(--particle-width, 0.85rem)) * 1.6);
   }
 
   .endgame-tear {
-    width: 0.5rem;
-    height: 1.6rem;
+    width: var(--tear-size, 0.5rem);
+    height: calc(var(--tear-size, 0.5rem) * 3.2);
     border-radius: 999px 999px 40% 40%;
-    background: rgba(148, 163, 184, 0.7);
+    background: rgba(148, 163, 184, 0.85);
     animation: tear-fall var(--tear-duration, 2.8s) ease-in forwards;
     animation-delay: var(--tear-delay, 0s);
     left: var(--tear-left, 50%);

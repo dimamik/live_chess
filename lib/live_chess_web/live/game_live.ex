@@ -5,6 +5,8 @@ defmodule LiveChessWeb.GameLive do
   alias LiveChess.Games
   alias LiveChess.Games.Notation
 
+  @auto_join_retry_ms 1_500
+
   @finished_statuses [
     :completed,
     :checkmate,
@@ -42,6 +44,7 @@ defmodule LiveChessWeb.GameLive do
       |> assign(:history_pairs, [])
       |> assign(:history_selected_ply, nil)
       |> assign(:endgame_overlay_dismissed, false)
+      |> assign(:auto_join_attempt, %{target: nil, attempted_at: nil})
       |> assign(:page_title, "LiveView Chess")
 
     if connected?(socket) do
@@ -713,27 +716,38 @@ defmodule LiveChessWeb.GameLive do
   end
 
   defp maybe_auto_join(socket, state) do
+    seat = available_seat(state)
+
     cond do
       socket.assigns.role in [:white, :black] ->
-        socket
+        reset_auto_join(socket)
 
-      _seat = available_seat(state) ->
-        case Games.join_game(socket.assigns.room_id, socket.assigns.player_token) do
-          {:ok, %{role: role, state: new_state}} ->
-            socket
-            |> assign(:role, role)
-            |> set_game_state(new_state)
-            |> assign(:error_message, nil)
+      seat ->
+        attempt = auto_join_attempt(socket.assigns)
+        now = System.monotonic_time(:millisecond)
 
-          {:error, :slot_taken} ->
-            socket
+        if recently_attempted?(attempt, seat, now) do
+          socket
+        else
+          case Games.join_game(socket.assigns.room_id, socket.assigns.player_token) do
+            {:ok, %{role: role, state: new_state}} ->
+              socket
+              |> assign(:role, role)
+              |> set_game_state(new_state)
+              |> assign(:error_message, nil)
+              |> reset_auto_join()
 
-          {:error, _} ->
-            socket
+            {:error, :slot_taken} ->
+              reset_auto_join(socket)
+
+            {:error, _} ->
+              socket
+              |> assign(:auto_join_attempt, %{target: seat, attempted_at: now})
+          end
         end
 
       true ->
-        socket
+        reset_auto_join(socket)
     end
   end
 
@@ -742,6 +756,20 @@ defmodule LiveChessWeb.GameLive do
   defp available_seat(%{players: %{white: nil}}), do: :white
   defp available_seat(%{players: %{black: nil}}), do: :black
   defp available_seat(_), do: nil
+
+  defp auto_join_attempt(assigns) do
+    Map.get(assigns, :auto_join_attempt, %{target: nil, attempted_at: nil})
+  end
+
+  defp reset_auto_join(socket) do
+    assign(socket, :auto_join_attempt, %{target: nil, attempted_at: nil})
+  end
+
+  defp recently_attempted?(%{target: target, attempted_at: attempted_at}, seat, now) do
+    target == seat && attempted_at && now - attempted_at < @auto_join_retry_ms
+  end
+
+  defp recently_attempted?(_attempt, _seat, _now), do: false
 
   defp determine_initial_role(state, token, fallback) do
     infer_role_from_state(state, token) || available_seat(state) || fallback
@@ -787,6 +815,11 @@ defmodule LiveChessWeb.GameLive do
                 <.turn_indicator game={@game} player_token={@player_token} />
               </div>
               <div class={"mt-2 text-sm " <> status_classes(@game)}>{status_line(@game)}</div>
+              <%= if robot_random_mode?(@game) do %>
+                <div class="mt-1 text-xs font-medium text-amber-600 dark:text-amber-400">
+                  Robot engine unavailable; making random moves.
+                </div>
+              <% end %>
 
               <div class="chess-board-grid">
                 <%= for row <- board_rows(@game, @role, @board_override) do %>
@@ -1189,7 +1222,7 @@ defmodule LiveChessWeb.GameLive do
               type: :celebration,
               heading: heading,
               subtext: subtext,
-              particles: celebration_particles()
+              particles: LiveChessWeb.EndgameParticles.celebration_particles()
             }
 
           winner == opponent_color ->
@@ -1200,7 +1233,7 @@ defmodule LiveChessWeb.GameLive do
               type: :defeat,
               heading: heading,
               subtext: subtext,
-              particles: defeat_particles()
+              particles: LiveChessWeb.EndgameParticles.defeat_particles()
             }
 
           true ->
@@ -1264,81 +1297,7 @@ defmodule LiveChessWeb.GameLive do
   defp overlay_class(:defeat), do: "endgame-overlay--defeat"
   defp overlay_class(_), do: "endgame-overlay--celebration"
 
-  defp celebration_particles do
-    [
-      %{left: "8%", delay: "0s", duration: "3.4s", color: "#facc15"},
-      %{left: "18%", delay: "0.2s", duration: "3.8s", color: "#f97316"},
-      %{left: "28%", delay: "0.45s", duration: "3.6s", color: "#f472b6"},
-      %{left: "38%", delay: "0.15s", duration: "3.9s", color: "#38bdf8"},
-      %{left: "48%", delay: "0.05s", duration: "3.3s", color: "#34d399"},
-      %{left: "58%", delay: "0.6s", duration: "3.7s", color: "#a855f7"},
-      %{left: "68%", delay: "0.25s", duration: "3.5s", color: "#f97316"},
-      %{left: "78%", delay: "0.5s", duration: "3.8s", color: "#22d3ee"},
-      %{left: "88%", delay: "0.35s", duration: "3.6s", color: "#facc15"},
-      %{left: "12%", delay: "0.75s", duration: "3.9s", color: "#ef4444"},
-      %{left: "32%", delay: "0.9s", duration: "3.7s", color: "#14b8a6"},
-      %{left: "52%", delay: "0.65s", duration: "3.5s", color: "#f97316"},
-      %{left: "72%", delay: "0.85s", duration: "3.4s", color: "#f87171"},
-      %{left: "92%", delay: "0.55s", duration: "3.6s", color: "#60a5fa"},
-      %{left: "5%", delay: "1s", duration: "4.1s", color: "#fca5a5"},
-      %{left: "15%", delay: "1.25s", duration: "3.8s", color: "#fcd34d"},
-      %{left: "25%", delay: "1.1s", duration: "4s", color: "#818cf8"},
-      %{left: "35%", delay: "1.4s", duration: "3.9s", color: "#22c55e"},
-      %{left: "45%", delay: "1.55s", duration: "3.7s", color: "#f472b6"},
-      %{left: "55%", delay: "1.2s", duration: "4.2s", color: "#38bdf8"},
-      %{left: "65%", delay: "1.45s", duration: "3.8s", color: "#fb7185"},
-      %{left: "75%", delay: "1.7s", duration: "4.1s", color: "#fbbf24"},
-      %{left: "85%", delay: "1.3s", duration: "3.9s", color: "#34d399"},
-      %{left: "95%", delay: "1.6s", duration: "3.7s", color: "#60a5fa"},
-      %{left: "50%", delay: "1.9s", duration: "4.3s", color: "#c084fc"},
-      %{left: "30%", delay: "2.1s", duration: "4s", color: "#fde047"},
-      %{left: "70%", delay: "2.25s", duration: "4.2s", color: "#38bdf8"}
-    ]
-    |> Enum.map(&confetti_particle/1)
-  end
-
-  defp defeat_particles do
-    [
-      %{left: "18%", delay: "0s", duration: "2.8s"},
-      %{left: "28%", delay: "0.35s", duration: "3.1s"},
-      %{left: "38%", delay: "0.6s", duration: "3s"},
-      %{left: "48%", delay: "0.2s", duration: "2.6s"},
-      %{left: "58%", delay: "0.8s", duration: "3.2s"},
-      %{left: "68%", delay: "0.45s", duration: "2.9s"},
-      %{left: "78%", delay: "0.7s", duration: "3.3s"},
-      %{left: "24%", delay: "0.9s", duration: "3.1s"},
-      %{left: "54%", delay: "1.05s", duration: "2.7s"},
-      %{left: "84%", delay: "1.2s", duration: "3s"}
-    ]
-    |> Enum.map(&tear_particle/1)
-  end
-
-  defp confetti_particle(attrs) do
-    style =
-      attrs
-      |> Enum.map(fn
-        {:left, value} -> "--confetti-left: #{value}"
-        {:delay, value} -> "--confetti-delay: #{value}"
-        {:duration, value} -> "--confetti-duration: #{value}"
-        {:color, value} -> "--confetti-color: #{value}"
-      end)
-      |> Enum.join("; ")
-
-    %{class: "endgame-confetti", style: style <> ";"}
-  end
-
-  defp tear_particle(attrs) do
-    style =
-      attrs
-      |> Enum.map(fn
-        {:left, value} -> "--tear-left: #{value}"
-        {:delay, value} -> "--tear-delay: #{value}"
-        {:duration, value} -> "--tear-duration: #{value}"
-      end)
-      |> Enum.join("; ")
-
-    %{class: "endgame-tear", style: style <> ";"}
-  end
+  # Particle generation moved to LiveChessWeb.EndgameParticles
 
   defp overlay_player_display(player, color) do
     cond do
@@ -1388,6 +1347,12 @@ defmodule LiveChessWeb.GameLive do
   defp status_line(%{status: status}) do
     "Game finished (#{format_status(status)})"
   end
+
+  defp robot_random_mode?(%{robot_mode: :random, status: status})
+       when status in [:active, :playing],
+       do: true
+
+  defp robot_random_mode?(_), do: false
 
   defp format_status(status) when is_atom(status) do
     status
@@ -1477,108 +1442,9 @@ defmodule LiveChessWeb.GameLive do
   defp clickable?(role, %{piece: %{color: color}}) when role == color, do: true
   defp clickable?(_role, _cell), do: false
 
-  defp piece_svg(nil), do: nil
-
-  defp piece_svg(%{color: color, type: type}) do
-    assigns = %{color: color, shape: piece_shape(type)}
-
-    ~H"""
-    <svg viewBox="0 0 64 64" class={"piece-svg piece-#{@color}"} role="img" aria-hidden="true">
-      {@shape}
-    </svg>
-    """
-  end
-
-  defp piece_shape("p") do
-    assigns = %{}
-
-    ~H"""
-    <circle class="piece-detail" cx="32" cy="18" r="6" />
-    <path
-      class="piece-body"
-      d="M23 48c0-9.8 5-20 9-20s9 10.2 9 20l4 6H19z"
-    />
-    <path class="piece-detail" d="M24 36h16l3 8H21z" />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
-    """
-  end
-
-  defp piece_shape("r") do
-    assigns = %{}
-
-    ~H"""
-    <path
-      class="piece-body"
-      d="M18 52H46V32l4-4V14H44v6h-6v-6h-8v6h-6v-6H18v14l4 4z"
-    />
-    <rect class="piece-detail" x="20" y="32" width="24" height="6" rx="2" />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
-    """
-  end
-
-  defp piece_shape("n") do
-    assigns = %{}
-
-    ~H"""
-    <path
-      class="piece-body"
-      d="M20 52V35l14-12-10-6 14-8 12 14-6 7 6 9v13h-8l-6 8H20z"
-    />
-    <circle class="piece-dot" cx="40" cy="22" r="2.2" />
-    <path class="piece-detail" d="M26 38c6 2 10 7 10 14" />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
-    """
-  end
-
-  defp piece_shape("b") do
-    assigns = %{}
-
-    ~H"""
-    <path
-      class="piece-body"
-      d="M32 10c-8.5 0-14.5 7.5-14.5 16 0 5.5 2.5 10.3 6.7 13.6L22 48v6h20v-6l-2.2-8.4C43.8 36.7 46.5 32 46.5 26c0-8.5-6-16-14.5-16z"
-    />
-    <path class="piece-detail" d="M24 30l16-12" />
-    <circle class="piece-detail" cx="32" cy="18" r="3" />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
-    """
-  end
-
-  defp piece_shape("q") do
-    assigns = %{}
-
-    ~H"""
-    <circle class="piece-detail" cx="18" cy="22" r="3" />
-    <circle class="piece-detail" cx="32" cy="16" r="4" />
-    <circle class="piece-detail" cx="46" cy="22" r="3" />
-    <path
-      class="piece-body"
-      d="M16 48l-4-8 6-6-6-8 6-6 8 10 6-14 6 14 8-10 6 6-6 8 6 6-4 8z"
-    />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
-    """
-  end
-
-  defp piece_shape("k") do
-    assigns = %{}
-
-    ~H"""
-    <path class="piece-detail" d="M30 6h4v8h6v4h-6v8h-4v-8h-6v-4h6z" />
-    <path
-      class="piece-body"
-      d="M22 52l-4-8 8-10-6-8 6-8h20l6 8-6 8 8 10-4 8z"
-    />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="3" />
-    """
-  end
-
-  defp piece_shape(_type) do
-    assigns = %{}
-
-    ~H"""
-    <rect class="piece-body" x="24" y="20" width="16" height="24" rx="4" />
-    <rect class="piece-base" x="18" y="50" width="28" height="6" rx="2" />
-    """
+  defp piece_svg(piece) do
+    # Delegate to central pieces module so we can iterate on the art in one place.
+    LiveChessWeb.Pieces.piece_svg(piece)
   end
 
   defp fetch_moves(socket, square) do
