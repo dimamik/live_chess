@@ -7,6 +7,7 @@ defmodule LiveChess.Engines do
   """
 
   alias LiveChess.Engines.Engine
+  alias LiveChess.Engines.EvalCache
 
   @spec module() :: module()
   def module do
@@ -25,7 +26,23 @@ defmodule LiveChess.Engines do
 
   @spec evaluate(String.t(), keyword()) :: {:ok, Engine.evaluation()} | {:error, term()}
   def evaluate(fen, opts \\ []) do
-    module().evaluate(fen, opts)
+    # Try to get from cache first
+    case EvalCache.get(fen) do
+      {:ok, cached_evaluation} ->
+        {:ok, cached_evaluation}
+
+      :miss ->
+        # Cache miss, call the actual engine
+        case module().evaluate(fen, opts) do
+          {:ok, evaluation} = result ->
+            # Store in cache for future use
+            EvalCache.put(fen, evaluation)
+            result
+
+          error ->
+            error
+        end
+    end
   end
 
   @spec best_move(String.t(), keyword()) :: {:ok, Engine.move()} | {:error, term()}

@@ -21,7 +21,8 @@ defmodule LiveChess.Application do
         {DNSCluster, query: Application.get_env(:live_chess, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: LiveChess.PubSub},
         {Registry, keys: :unique, name: LiveChess.GameRegistry},
-        LiveChess.GameSupervisor
+        LiveChess.GameSupervisor,
+        LiveChess.Engines.EvalCache
       ] ++
         restorer_child ++
         [

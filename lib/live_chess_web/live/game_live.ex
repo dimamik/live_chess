@@ -783,9 +783,9 @@ defmodule LiveChessWeb.GameLive do
       phx-hook="SoundEffects"
       phx-window-keydown="escape_press"
       phx-key="escape"
-      class="mx-auto max-w-6xl px-4 py-8"
+      class="mx-auto max-w-6xl px-2 py-4 sm:px-4 sm:py-8"
     >
-      <div class="flex flex-col gap-6 lg:flex-row">
+      <div class="flex flex-col gap-4 sm:gap-6 lg:flex-row">
         <div class="flex-1">
           <%= if @board_ready? and @game do %>
             <div class="chess-board-panel">
@@ -860,7 +860,7 @@ defmodule LiveChessWeb.GameLive do
           <% end %>
         </div>
 
-        <div class="w-full max-w-sm space-y-4">
+        <div class="w-full space-y-4 lg:max-w-sm">
           <div class="panel-surface">
             <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Share</h3>
             <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
