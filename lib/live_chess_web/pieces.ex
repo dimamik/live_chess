@@ -38,6 +38,9 @@ defmodule LiveChessWeb.Pieces do
   @spec piece_svg(map() | nil) :: Phoenix.HTML.Safe.t() | nil
   def piece_svg(nil), do: nil
 
+  # sobelow_skip ["XSS.Raw"]
+  # Safe: SVG content is from @pieces module attribute containing hardcoded chess piece SVGs.
+  # All SVG data is defined at compile time in this module and not user-provided.
   def piece_svg(%{color: color, type: type}) do
     key = {normalize_color(color), normalize_type(type)}
 

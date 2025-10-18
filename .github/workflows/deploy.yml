@@ -60,6 +60,10 @@ jobs:
           mix ecto.migrate --quiet
       - name: Check formatting
         run: mix format --check-formatted
+      - name: Run Credo
+        run: mix credo --strict
+      - name: Run Security Scan
+        run: mix sobelow --skip --exit
       - name: Run tests
         run: mix test
 

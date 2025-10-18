@@ -5,6 +5,7 @@ defmodule LiveChess.GameServer do
   require Logger
 
   alias Chess.Game, as: ChessGame
+  alias LiveChess.Games.Board
   alias LiveChess.Games.{Notation, Storage}
 
   @type room_id :: String.t()
@@ -145,20 +146,20 @@ defmodule LiveChess.GameServer do
   end
 
   def handle_call({:join, token}, _from, state) do
-    cond do
-      player?(state, token) ->
-        color = color_for(state, token)
-        updated = put_in(state, [:players, color, :connected?], true)
-        updated = maybe_broadcast(state, updated)
-        {:reply, {:ok, payload(updated, token, color)}, updated}
-
-      true ->
-        with {:ok, state, color} <- claim_available_slot(state, token) do
+    if player?(state, token) do
+      color = color_for(state, token)
+      updated = put_in(state, [:players, color, :connected?], true)
+      updated = maybe_broadcast(state, updated)
+      {:reply, {:ok, payload(updated, token, color)}, updated}
+    else
+      case claim_available_slot(state, token) do
+        {:ok, state, color} ->
           state = maybe_activate(state)
           {:reply, {:ok, payload(state, token, color)}, state}
-        else
-          {:error, reason} -> {:reply, {:error, reason}, state}
-        end
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
     end
   end
 
@@ -290,15 +291,13 @@ defmodule LiveChess.GameServer do
   @impl true
   def handle_cast({:leave, token}, state) do
     state =
-      cond do
-        player?(state, token) ->
-          color = color_for(state, token)
-          updated = put_in(state, [:players, color, :connected?], false)
-          maybe_broadcast(state, updated)
-
-        true ->
-          # Spectators are tracked by Presence, no need to update state
-          state
+      if player?(state, token) do
+        color = color_for(state, token)
+        updated = put_in(state, [:players, color, :connected?], false)
+        maybe_broadcast(state, updated)
+      else
+        # Spectators are tracked by Presence, no need to update state
+        state
       end
 
     {:noreply, state}
@@ -385,6 +384,9 @@ defmodule LiveChess.GameServer do
 
   defp valid_square?(_), do: false
 
+  # sobelow_skip ["DOS.StringToAtom"]
+  # Square is a chess board coordinate (a1-h8), validated by the chess library.
+  # The chess library ensures only valid square names are used, limiting atoms to 64 possibilities.
   defp fetch_piece(%ChessGame{squares: squares}, square) do
     squares
     |> Map.new()
@@ -467,7 +469,7 @@ defmodule LiveChess.GameServer do
       in_check: outcome.in_check,
       players: serialize_players(state.players),
       last_move: state.last_move,
-      board: LiveChess.Games.Board.from_game(state.game),
+      board: Board.from_game(state.game),
       turn: current_turn(state.game.current_fen),
       history: Enum.map(annotated_history, & &1.san),
       history_moves: annotated_history,
@@ -633,19 +635,17 @@ defmodule LiveChess.GameServer do
   defp maybe_queue_robot_move(%{robot: nil} = state), do: cancel_robot_timer(state)
 
   defp maybe_queue_robot_move(state) do
-    cond do
-      robot_turn?(state) ->
-        case state.robot_timer do
-          nil ->
-            ref = Process.send_after(self(), :robot_move, robot_delay(state))
-            %{state | robot_timer: ref}
+    if robot_turn?(state) do
+      case state.robot_timer do
+        nil ->
+          ref = Process.send_after(self(), :robot_move, robot_delay(state))
+          %{state | robot_timer: ref}
 
-          _ref ->
-            state
-        end
-
-      true ->
-        cancel_robot_timer(state)
+        _ref ->
+          state
+      end
+    else
+      cancel_robot_timer(state)
     end
   end
 

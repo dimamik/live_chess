@@ -17,8 +17,8 @@ defmodule LiveChessWeb.ConnCase do
 
   use ExUnit.CaseTemplate
 
-  alias LiveChess.Repo
   alias Ecto.Adapters.SQL.Sandbox
+  alias LiveChess.Repo
 
   using do
     quote do

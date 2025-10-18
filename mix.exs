@@ -59,7 +59,9 @@ defmodule LiveChess.MixProject do
       {:bandit, "~> 1.5"},
       {:chess, "~> 0.4.3"},
       {:ecto_sql, "~> 3.11"},
-      {:postgrex, "~> 0.17"}
+      {:postgrex, "~> 0.17"},
+      {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end
 

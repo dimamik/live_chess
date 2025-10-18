@@ -8,6 +8,28 @@ defmodule LiveChessWeb.Router do
     plug :put_root_layout, html: {LiveChessWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug :put_csp_headers
+  end
+
+  defp put_csp_headers(conn, _opts) do
+    # Content Security Policy for enhanced security
+    # - default-src 'self': Only allow resources from same origin
+    # - script-src adds 'unsafe-inline' for LiveView and 'unsafe-eval' for Stockfish WASM
+    # - style-src adds 'unsafe-inline' for inline styles
+    # - img-src adds data: for inline SVG pieces
+    # - connect-src adds wss: for LiveView websocket connections
+    csp_value =
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "connect-src 'self' ws: wss:",
+        "font-src 'self' data:"
+      ]
+      |> Enum.join("; ")
+
+    Plug.Conn.put_resp_header(conn, "content-security-policy", csp_value)
   end
 
   pipeline :api do

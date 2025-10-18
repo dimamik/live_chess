@@ -3,8 +3,9 @@ defmodule LiveChess.Games do
   Public API for managing in-memory chess games.
   """
 
-  alias LiveChess.{GameServer, GameSupervisor}
   alias LiveChess.Games.Storage
+  alias LiveChess.GameServer
+  alias LiveChess.GameSupervisor
 
   @room_length 6
 

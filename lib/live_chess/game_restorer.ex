@@ -3,7 +3,8 @@ defmodule LiveChess.GameRestorer do
 
   use GenServer
 
-  alias LiveChess.{GameSupervisor, Games.Storage}
+  alias LiveChess.Games.Storage
+  alias LiveChess.GameSupervisor
 
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)

@@ -61,38 +61,36 @@ defmodule LiveChessWeb.LobbyLive do
     {:noreply, assign(socket, :room_code, normalize_room(room_code))}
   end
 
-  def handle_event("join_room", _params, socket) do
+  def handle_event("join_game", _params, socket) do
     room_id = socket.assigns.room_code
 
-    cond do
-      room_id == "" ->
-        {:noreply, assign(socket, :error, "Enter a room code to join.")}
+    if room_id == "" do
+      {:noreply, assign(socket, :error, "Enter a room code to join.")}
+    else
+      socket = assign(socket, joining?: true, error: nil)
 
-      true ->
-        socket = assign(socket, joining?: true, error: nil)
+      case Games.join_game(room_id, socket.assigns.player_token) do
+        {:ok, %{role: role}} when role in [:white, :black] ->
+          {:noreply, push_navigate(socket, to: ~p"/game/#{room_id}")}
 
-        case Games.join_game(room_id, socket.assigns.player_token) do
-          {:ok, %{role: role}} when role in [:white, :black] ->
-            {:noreply, push_navigate(socket, to: ~p"/game/#{room_id}")}
+        {:error, :slot_taken} ->
+          {:noreply,
+           socket
+           |> assign(:joining?, false)
+           |> assign(:error, "Both seats are already taken.")}
 
-          {:error, :slot_taken} ->
-            {:noreply,
-             socket
-             |> assign(:joining?, false)
-             |> assign(:error, "Both seats are already taken.")}
+        {:error, _} ->
+          {:noreply,
+           socket
+           |> assign(:joining?, false)
+           |> assign(:error, "Unable to join that room. Check the code and try again.")}
 
-          {:error, _} ->
-            {:noreply,
-             socket
-             |> assign(:joining?, false)
-             |> assign(:error, "Unable to join that room. Check the code and try again.")}
-
-          _ ->
-            {:noreply,
-             socket
-             |> assign(:joining?, false)
-             |> assign(:error, "Unable to join that room right now.")}
-        end
+        _ ->
+          {:noreply,
+           socket
+           |> assign(:joining?, false)
+           |> assign(:error, "Unable to join that room right now.")}
+      end
     end
   end
 

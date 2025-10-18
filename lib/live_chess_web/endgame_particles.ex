@@ -62,29 +62,25 @@ defmodule LiveChessWeb.EndgameParticles do
 
   defp confetti_particle(attrs) do
     style =
-      attrs
-      |> Enum.map(fn
+      Enum.map_join(attrs, "; ", fn
         {:left, value} -> "--confetti-left: #{value}"
         {:delay, value} -> "--confetti-delay: #{value}"
         {:duration, value} -> "--confetti-duration: #{value}"
         {:size, value} -> "--confetti-size: #{value}"
         {:color, value} -> "--confetti-color: #{value}"
       end)
-      |> Enum.join("; ")
 
     %{class: "endgame-confetti", style: style <> ";"}
   end
 
   defp tear_particle(attrs) do
     style =
-      attrs
-      |> Enum.map(fn
+      Enum.map_join(attrs, "; ", fn
         {:left, value} -> "--tear-left: #{value}"
         {:delay, value} -> "--tear-delay: #{value}"
         {:duration, value} -> "--tear-duration: #{value}"
         {:size, value} -> "--tear-size: #{value}"
       end)
-      |> Enum.join("; ")
 
     %{class: "endgame-tear", style: style <> ";"}
   end

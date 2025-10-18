@@ -3,6 +3,7 @@ defmodule LiveChessWeb.GameLive do
 
   alias Chess.Game, as: ChessGame
   alias LiveChess.Games
+  alias LiveChess.Games.Board
   alias LiveChess.Games.Notation
   alias LiveChessWeb.Presence
 
@@ -545,12 +546,10 @@ defmodule LiveChessWeb.GameLive do
   defp board_from_fen(nil), do: nil
 
   defp board_from_fen(fen) when is_binary(fen) do
-    try do
-      ChessGame.new(fen)
-      |> LiveChess.Games.Board.from_game()
-    rescue
-      _ -> nil
-    end
+    ChessGame.new(fen)
+    |> Board.from_game()
+  rescue
+    _ -> nil
   end
 
   defp board_from_fen(_), do: nil
@@ -707,10 +706,10 @@ defmodule LiveChessWeb.GameLive do
   defp move_aria_current(_move, _selected_ply), do: nil
 
   defp board_rows(_game, role, board_override) when is_list(board_override),
-    do: LiveChess.Games.Board.oriented(board_override, role)
+    do: Board.oriented(board_override, role)
 
   defp board_rows(%{board: board}, role, _board_override) when is_list(board),
-    do: LiveChess.Games.Board.oriented(board, role)
+    do: Board.oriented(board, role)
 
   defp board_rows(_game, _role, _board_override), do: []
 
@@ -1452,8 +1451,7 @@ defmodule LiveChessWeb.GameLive do
 
     # Count users with spectator role
     spectator_count =
-      presences
-      |> Enum.filter(fn
+      Enum.count(presences, fn
         {_id, %{metas: metas}} when is_list(metas) ->
           Enum.any?(metas, fn
             meta when is_map(meta) -> Map.get(meta, :role) == :spectator
@@ -1463,7 +1461,6 @@ defmodule LiveChessWeb.GameLive do
         _ ->
           false
       end)
-      |> Enum.count()
 
     # Update game state with new spectator count
     # Handle case where game might be nil during initial mount
@@ -1561,7 +1558,7 @@ defmodule LiveChessWeb.GameLive do
         socket
 
       # It's robot's turn - request move from client
-      is_robot_turn?(state) ->
+      robot_turn?(state) ->
         Phoenix.LiveView.push_event(socket, "request_robot_move", %{
           fen: state.current_fen,
           depth: 12
@@ -1580,12 +1577,12 @@ defmodule LiveChessWeb.GameLive do
 
   defp has_robot_player?(_), do: false
 
-  defp is_robot_turn?(%{turn: turn, players: players}) do
+  defp robot_turn?(%{turn: turn, players: players}) do
     player = Map.get(players, turn)
     Map.get(player || %{}, :robot?) == true
   end
 
-  defp is_robot_turn?(_), do: false
+  defp robot_turn?(_), do: false
 
   defp show_surrender_button?(_role, nil), do: false
 

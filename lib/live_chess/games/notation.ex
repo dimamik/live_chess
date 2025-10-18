@@ -75,15 +75,16 @@ defmodule LiveChess.Games.Notation do
   defp parse_move(_), do: :error
 
   defp load_game(fen) when is_binary(fen) do
-    try do
-      {:ok, ChessGame.new(fen)}
-    rescue
-      _ -> {:error, :invalid_fen}
-    end
+    {:ok, ChessGame.new(fen)}
+  rescue
+    _ -> {:error, :invalid_fen}
   end
 
   defp load_game(_), do: {:error, :invalid_fen}
 
+  # sobelow_skip ["DOS.StringToAtom"]
+  # Safe: square is a chess board coordinate (a1-h8) validated by the chess library.
+  # Limited to 64 valid square names, preventing atom table exhaustion.
   defp fetch_piece(%ChessGame{squares: squares}, square) do
     squares
     |> square_map()
@@ -191,18 +192,19 @@ defmodule LiveChess.Games.Notation do
   end
 
   defp legal_move?(fen, from, to) when is_binary(fen) and is_binary(from) and is_binary(to) do
-    try do
-      case ChessGame.play(ChessGame.new(fen), "#{from}-#{to}", "q") do
-        {:ok, _} -> true
-        _ -> false
-      end
-    rescue
+    case ChessGame.play(ChessGame.new(fen), "#{from}-#{to}", "q") do
+      {:ok, _} -> true
       _ -> false
     end
+  rescue
+    _ -> false
   end
 
   defp legal_move?(_, _, _), do: false
 
+  # sobelow_skip ["DOS.StringToAtom"]
+  # Safe: 'to' is a chess board coordinate (a1-h8) validated by the chess library.
+  # Limited to 64 valid square names, preventing atom table exhaustion.
   defp capture?(piece, to, %ChessGame{squares: squares} = before_game, before_fen) do
     target = square_map(squares) |> Map.get(String.to_atom(to))
 
@@ -236,6 +238,9 @@ defmodule LiveChess.Games.Notation do
 
   defp en_passant_target(_), do: nil
 
+  # sobelow_skip ["DOS.StringToAtom"]
+  # 'to' is a chess board coordinate (a1-h8) validated by the chess library.
+  # Limited to 64 valid square names, preventing atom table exhaustion.
   defp promotion_suffix(%{type: "p"}, to, %ChessGame{squares: squares}) do
     case square_map(squares) |> Map.get(String.to_atom(to)) do
       %{type: type} when type != "p" -> "=" <> String.upcase(type)

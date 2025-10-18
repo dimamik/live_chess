@@ -3,8 +3,8 @@ defmodule LiveChess.Games.Storage do
 
   import Ecto.Query, only: [from: 2]
 
-  alias LiveChess.Repo
   alias LiveChess.Games.GameRecord
+  alias LiveChess.Repo
 
   @doc """
   Persist the latest in-memory state for a game.
@@ -59,6 +59,10 @@ defmodule LiveChess.Games.Storage do
     end
   end
 
+  # sobelow_skip ["Misc.BinToTerm"]
+  # binary_to_term is used on data we control (game state serialized by our own application).
+  # The binary is stored in our database and created by term_to_binary in persist_state/1.
+  # We rescue ArgumentError to handle corrupted data gracefully.
   defp decode_record(%GameRecord{state: binary}) do
     {:ok, :erlang.binary_to_term(binary)}
   rescue

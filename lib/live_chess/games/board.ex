@@ -35,6 +35,9 @@ defmodule LiveChess.Games.Board do
 
   def oriented(board, _), do: board
 
+  # sobelow_skip ["DOS.StringToAtom"]
+  # key is a chess board coordinate (a1-h8) from the chess library.
+  # Limited to 64 valid square names, preventing atom table exhaustion.
   defp normalize_piece(squares, key) do
     case Map.get(squares, String.to_atom(key)) do
       nil -> {:ok, nil}

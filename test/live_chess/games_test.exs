@@ -1,11 +1,13 @@
 defmodule LiveChess.GamesTest do
   use ExUnit.Case, async: false
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias LiveChess.Games
+  alias LiveChess.Repo
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(LiveChess.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(LiveChess.Repo, {:shared, self()})
+    :ok = Sandbox.checkout(Repo)
+    Sandbox.mode(Repo, {:shared, self()})
     :ok
   end
 
