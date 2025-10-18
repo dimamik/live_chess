@@ -18,12 +18,27 @@ defmodule LiveChess.Games do
   def create_game(creator_token) do
     room_id = unique_room_id()
 
-    with {:ok, _pid} <- GameSupervisor.start_game(room_id),
-         {:ok, %{role: _role}} <- GameServer.create(room_id, creator_token) do
-      {:ok, room_id}
-    else
-      {:ok, :already_started} -> GameServer.create(room_id, creator_token)
-      {:error, reason} -> {:error, reason}
+    case GameSupervisor.start_game(room_id) do
+      {:ok, pid} when is_pid(pid) ->
+        case GameServer.create(room_id, creator_token) do
+          {:ok, _result} -> {:ok, room_id}
+          error -> error
+        end
+
+      {:ok, :already_started} ->
+        case GameServer.create(room_id, creator_token) do
+          {:ok, _result} -> {:ok, room_id}
+          error -> error
+        end
+
+      {:error, {:already_started, _pid}} ->
+        case GameServer.create(room_id, creator_token) do
+          {:ok, _result} -> {:ok, room_id}
+          error -> error
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

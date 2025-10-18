@@ -160,6 +160,34 @@ const playJoinSound = async () => {
   });
 };
 
+// Vibration helpers for mobile devices
+const vibrateDevice = (pattern) => {
+  // Check if vibration API is available (mobile devices)
+  if (typeof navigator !== "undefined" && navigator.vibrate) {
+    try {
+      navigator.vibrate(pattern);
+    } catch (error) {
+      // Vibration not supported or failed silently
+      console.debug("Vibration failed:", error);
+    }
+  }
+};
+
+const vibrateOnMove = () => {
+  // Short single vibration for moves (50ms)
+  vibrateDevice(50);
+};
+
+const vibrateOnOpponentMove = () => {
+  // Slightly longer vibration for opponent moves (80ms)
+  vibrateDevice(80);
+};
+
+const vibrateOnJoin = () => {
+  // Two short vibrations for player joining
+  vibrateDevice([60, 40, 60]);
+};
+
 import {
   initStockfish,
   evaluatePosition,
@@ -310,6 +338,12 @@ const Hooks = {
 
       this.handleEvent("play-move-sound", playMoveSound);
       this.handleEvent("play-join-sound", playJoinSound);
+
+      // Vibration events
+      this.handleEvent("vibrate-move", vibrateOnMove);
+      this.handleEvent("vibrate-opponent-move", vibrateOnOpponentMove);
+      this.handleEvent("vibrate-join", vibrateOnJoin);
+
       resumeAudioContext();
     },
   },

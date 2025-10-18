@@ -254,12 +254,29 @@ defmodule LiveChess.GameServer do
   def handle_call({:robot_move, move}, _from, state) when is_map(move) do
     from = move[:from] || move["from"]
     to = move[:to] || move["to"]
-    promotion = move[:promotion] || move["promotion"] || "q"
+    raw_promotion = move[:promotion] || move["promotion"]
+
+    # Only use promotion if it's actually a promotion move (pawn reaching back rank)
+    # The engine sometimes incorrectly includes promotion for non-pawn moves
+    promotion =
+      if promotion_move?(from, to, state.game.current_fen), do: raw_promotion, else: "q"
+
+    # Build the move string
+    move_string = String.downcase("#{from}-#{to}")
+
+    # Use the appropriate play function based on whether it's a promotion move
+    game_result =
+      if promotion_move?(from, to, state.game.current_fen) do
+        ChessGame.play(state.game, move_string, promotion)
+      else
+        # For non-promotion moves, don't pass the promotion parameter
+        ChessGame.play(state.game, move_string)
+      end
 
     with %{robot: %{color: color}} <- state,
          :active <- state.status,
          ^color <- current_turn(state.game.current_fen),
-         {:ok, game} <- ChessGame.play(state.game, String.downcase("#{from}-#{to}"), promotion) do
+         {:ok, game} <- game_result do
       updated =
         state
         |> cancel_robot_timer()
@@ -267,7 +284,8 @@ defmodule LiveChess.GameServer do
         |> Map.put(:last_move, %{
           from: from,
           to: to,
-          promotion: promotion,
+          promotion:
+            if(promotion_move?(from, to, state.game.current_fen), do: promotion, else: nil),
           color: color,
           robot?: true
         })
@@ -416,9 +434,16 @@ defmodule LiveChess.GameServer do
         to != square,
         reduce: [] do
       acc ->
-        case ChessGame.play(game, square <> "-" <> to, "q") do
-          {:ok, _new_game} -> [to | acc]
-          {:error, _reason} -> acc
+        try do
+          case ChessGame.play(game, square <> "-" <> to, "q") do
+            {:ok, _new_game} -> [to | acc]
+            {:error, _reason} -> acc
+          end
+        rescue
+          # The chess library sometimes crashes on invalid castling checks
+          # Catch these exceptions and treat them as invalid moves
+          FunctionClauseError -> acc
+          _ -> acc
         end
     end
     |> Enum.reverse()
@@ -659,6 +684,51 @@ defmodule LiveChess.GameServer do
   defp persistable_state(state) do
     state
     |> Map.put(:robot_timer, nil)
+  end
+
+  # Check if a move is actually a promotion (pawn reaching back rank)
+  defp promotion_move?(from, to, fen) do
+    # Parse the FEN to get piece positions
+    [board_part | _] = String.split(fen, " ")
+
+    # Get the piece at the 'from' square
+    piece = get_piece_at_square(from, board_part)
+
+    # Get the rank of the 'to' square
+    to_rank = String.at(to, 1)
+
+    # It's a promotion if:
+    # 1. The piece is a white pawn (P) moving to rank 8
+    # 2. OR the piece is a black pawn (p) moving to rank 1
+    case piece do
+      # White pawn promotes on rank 8
+      "P" -> to_rank == "8"
+      # Black pawn promotes on rank 1
+      "p" -> to_rank == "1"
+      # Not a pawn
+      _ -> false
+    end
+  end
+
+  defp get_piece_at_square(square, board_fen) do
+    # Convert square notation (e.g., "e2") to board coordinates
+    # a=0, b=1, etc
+    file = String.at(square, 0) |> :binary.first() |> Kernel.-(97)
+    # Flip rank (8=0, 1=7)
+    rank = 8 - (String.at(square, 1) |> String.to_integer())
+
+    # Parse FEN ranks
+    ranks = String.split(board_fen, "/")
+    rank_str = Enum.at(ranks, rank)
+
+    # Expand digits in rank string (e.g., "3" -> "   ")
+    expanded =
+      Regex.replace(~r/\d/, rank_str, fn digit ->
+        String.duplicate(" ", String.to_integer(digit))
+      end)
+
+    # Get piece at file position
+    String.at(expanded, file) || " "
   end
 
   defp topic(room_id), do: "game:" <> room_id
