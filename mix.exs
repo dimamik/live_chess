@@ -79,6 +79,9 @@ defmodule LiveChess.MixProject do
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["tailwind live_chess", "esbuild live_chess"],
       "assets.deploy": [
+        "cmd mkdir -p priv/static/assets",
+        "cmd cp assets/stockfish-17.1-lite-single-03e3232.js priv/static/assets/",
+        "cmd cp assets/stockfish-17.1-lite-single-03e3232.wasm priv/static/assets/",
         "tailwind live_chess --minify",
         "esbuild live_chess --minify",
         "phx.digest"

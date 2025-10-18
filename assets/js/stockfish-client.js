@@ -8,15 +8,12 @@ let pendingEvaluations = new Map();
 let evaluationCounter = 0;
 
 // Initialize Stockfish engine
-export async function initStockfish() {
+export async function initStockfish(workerPath) {
   if (stockfishWorker) return stockfishWorker;
 
   return new Promise((resolve, reject) => {
     try {
-      // Use the lite single-threaded version for better browser compatibility
-      // This version is smaller and works well for real-time evaluation
-      const workerPath = "/assets/stockfish-17.1-lite-single-03e3232.js";
-
+      // Use the provided path from Phoenix (resolved correctly in both dev and prod)
       stockfishWorker = new Worker(workerPath);
 
       // Set up message handler

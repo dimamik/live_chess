@@ -169,8 +169,11 @@ import {
 const Hooks = {
   StockfishEvaluator: {
     mounted() {
-      // Initialize Stockfish engine
-      initStockfish().catch((err) => {
+      // Get the Stockfish path from the data attribute (works with digested assets in production)
+      const stockfishPath = this.el.dataset.stockfishPath;
+
+      // Initialize Stockfish engine with the correct path
+      initStockfish(stockfishPath).catch((err) => {
         console.error("Failed to initialize Stockfish:", err);
       });
 

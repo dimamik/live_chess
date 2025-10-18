@@ -822,7 +822,13 @@ defmodule LiveChessWeb.GameLive do
       phx-key="escape"
       class="mx-auto max-w-6xl px-2 py-4 sm:px-4 sm:py-8"
     >
-      <div id="stockfish-evaluator" phx-hook="StockfishEvaluator" style="display: none;"></div>
+      <div
+        id="stockfish-evaluator"
+        phx-hook="StockfishEvaluator"
+        data-stockfish-path="/assets/stockfish-17.1-lite-single-03e3232.js"
+        style="display: none;"
+      >
+      </div>
       <div class="flex flex-col gap-4 sm:gap-6 lg:flex-row">
         <div class="flex-1">
           <%= if @board_ready? and @game do %>
