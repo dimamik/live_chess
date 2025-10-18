@@ -122,23 +122,6 @@ defmodule LiveChessWeb.GameLive do
   end
 
   @impl true
-  def handle_event("claim-seat", _params, socket) do
-    case Games.join_game(socket.assigns.room_id, socket.assigns.player_token) do
-      {:ok, %{role: role, state: state}} ->
-        {:noreply,
-         socket
-         |> assign(:role, role)
-         |> set_game_state(state)
-         |> assign(:error_message, nil)}
-
-      {:error, :slot_taken} ->
-        {:noreply, assign(socket, :error_message, "Both seats are already taken.")}
-
-      {:error, _} ->
-        {:noreply, assign(socket, :error_message, "Unable to claim a seat right now.")}
-    end
-  end
-
   def handle_event("request_home", _params, socket) do
     if game_pending?(socket.assigns.game) do
       {:noreply, assign(socket, :show_leave_modal, true)}
@@ -250,6 +233,47 @@ defmodule LiveChessWeb.GameLive do
     {:noreply, socket}
   end
 
+  def handle_event("client_eval_result", %{"evaluation" => evaluation}, socket) do
+    # Update game state with client-side evaluation
+    # Keep as strings from JavaScript
+    normalized_evaluation = %{
+      "score_cp" => Map.get(evaluation, "score_cp"),
+      "display_score" => Map.get(evaluation, "display_score"),
+      "white_percentage" => Map.get(evaluation, "white_percentage"),
+      "advantage" => Map.get(evaluation, "advantage", "equal"),
+      "source" => Map.get(evaluation, "source", "stockfish_wasm")
+    }
+
+    game = socket.assigns.game
+
+    if game do
+      updated_game = Map.put(game, :evaluation, normalized_evaluation)
+      {:noreply, assign(socket, :game, updated_game)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("client_eval_error", %{"error" => _error}, socket) do
+    # Evaluation failed, keep server-side evaluation
+    {:noreply, socket}
+  end
+
+  def handle_event("robot_move_ready", %{"move" => move}, socket) do
+    # Client has calculated the best move for the robot
+    room_id = socket.assigns.room_id
+
+    case LiveChess.GameServer.robot_move(room_id, move) do
+      {:ok, _state} -> {:noreply, socket}
+      {:error, _reason} -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("robot_move_error", %{"error" => _error}, socket) do
+    # Robot move calculation failed
+    {:noreply, socket}
+  end
+
   def handle_event("select_square", %{"square" => square}, socket) do
     cond do
       not viewing_live?(socket) ->
@@ -291,6 +315,8 @@ defmodule LiveChessWeb.GameLive do
       |> set_game_state(state)
       |> assign(:error_message, nil)
       |> maybe_reset_selection(state)
+      |> request_client_evaluation(state)
+      |> maybe_request_robot_move(state)
 
     {:noreply, maybe_auto_join(socket, state)}
   end
@@ -793,6 +819,7 @@ defmodule LiveChessWeb.GameLive do
       phx-key="escape"
       class="mx-auto max-w-6xl px-2 py-4 sm:px-4 sm:py-8"
     >
+      <div id="stockfish-evaluator" phx-hook="StockfishEvaluator" style="display: none;"></div>
       <div class="flex flex-col gap-4 sm:gap-6 lg:flex-row">
         <div class="flex-1">
           <%= if @board_ready? and @game do %>
@@ -824,11 +851,6 @@ defmodule LiveChessWeb.GameLive do
               </div>
               <div class="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span class={"text-sm " <> status_classes(@game)}>{status_line(@game)}</span>
-                <%= if robot_random_mode?(@game) do %>
-                  <span class="text-xs font-medium text-amber-600 dark:text-amber-400">
-                    (Robot engine unavailable; making random moves)
-                  </span>
-                <% end %>
               </div>
 
               <div class="chess-board-grid">
@@ -1139,7 +1161,15 @@ defmodule LiveChessWeb.GameLive do
   end
 
   def evaluation_panel(assigns) do
-    white_pct = assigns.evaluation.white_percentage
+    # Ensure white_pct is a float for arithmetic operations
+    # Handle both atom keys (from server) and string keys (from JavaScript)
+    white_pct =
+      case assigns.evaluation[:white_percentage] || assigns.evaluation["white_percentage"] do
+        nil -> 50.0
+        val when is_number(val) -> val * 1.0
+        val when is_binary(val) -> String.to_float(val)
+      end
+
     black_pct = max(0.0, 100.0 - white_pct)
 
     assigns =
@@ -1170,15 +1200,29 @@ defmodule LiveChessWeb.GameLive do
     """
   end
 
+  # Handle both atom keys (server-side) and string keys (client-side)
+  defp evaluation_caption(%{"advantage" => "white", "display_score" => score}),
+    do: append_score("White is better", score)
+
   defp evaluation_caption(%{advantage: :white, display_score: score}),
     do: append_score("White is better", score)
+
+  defp evaluation_caption(%{"advantage" => "black", "display_score" => score}),
+    do: append_score("Black is better", score)
 
   defp evaluation_caption(%{advantage: :black, display_score: score}),
     do: append_score("Black is better", score)
 
+  defp evaluation_caption(%{"display_score" => score}), do: append_score("Even position", score)
   defp evaluation_caption(%{display_score: score}), do: append_score("Even position", score)
 
-  defp format_percentage(value) when is_number(value) do
+  defp format_percentage(value) when is_integer(value) do
+    (value / 1.0)
+    |> Float.round(1)
+    |> :erlang.float_to_binary([{:decimals, 1}])
+  end
+
+  defp format_percentage(value) when is_float(value) do
     value
     |> Float.round(1)
     |> :erlang.float_to_binary([{:decimals, 1}])
@@ -1186,12 +1230,12 @@ defmodule LiveChessWeb.GameLive do
 
   defp format_percentage(_), do: "0.0"
 
-  defp score_text_class(%{advantage: :white}), do: "text-emerald-500"
-  defp score_text_class(%{advantage: :black}), do: "text-slate-500 dark:text-slate-300"
+  defp score_text_class(%{"advantage" => "white"}), do: "text-emerald-500"
+  defp score_text_class(%{"advantage" => "black"}), do: "text-slate-500 dark:text-slate-300"
   defp score_text_class(_), do: "text-slate-500 dark:text-slate-300"
 
-  defp evaluation_indicator(%{advantage: :white}), do: "White edge"
-  defp evaluation_indicator(%{advantage: :black}), do: "Black edge"
+  defp evaluation_indicator(%{"advantage" => "white"}), do: "White edge"
+  defp evaluation_indicator(%{"advantage" => "black"}), do: "Black edge"
   defp evaluation_indicator(_), do: "Balanced"
 
   defp append_score(label, score) when is_binary(score) do
@@ -1312,7 +1356,7 @@ defmodule LiveChessWeb.GameLive do
   defp overlay_player_display(player, color) do
     cond do
       player && Map.get(player, :robot?) ->
-        "the robot"
+        Map.get(player, :name, "Robot")
 
       player && valid_player_name?(Map.get(player, :name)) ->
         Map.get(player, :name)
@@ -1357,12 +1401,6 @@ defmodule LiveChessWeb.GameLive do
   defp status_line(%{status: status}) do
     "Game finished (#{format_status(status)})"
   end
-
-  defp robot_random_mode?(%{robot_mode: :random, status: status})
-       when status in [:active, :playing],
-       do: true
-
-  defp robot_random_mode?(_), do: false
 
   defp format_status(status) when is_atom(status) do
     status
@@ -1494,6 +1532,56 @@ defmodule LiveChessWeb.GameLive do
       _ -> []
     end
   end
+
+  defp request_client_evaluation(socket, state) do
+    # Request client-side evaluation via JavaScript hook
+    if Map.get(state, :current_fen) do
+      Phoenix.LiveView.push_event(socket, "request_client_eval", %{
+        fen: state.current_fen,
+        depth: 12
+      })
+    else
+      socket
+    end
+  end
+
+  defp maybe_request_robot_move(socket, state) do
+    # Check if it's the robot's turn and request a move from the client-side engine
+    cond do
+      # Not active game
+      state.status != :active ->
+        socket
+
+      # No robot in game
+      !has_robot_player?(state) ->
+        socket
+
+      # It's robot's turn - request move from client
+      is_robot_turn?(state) ->
+        Phoenix.LiveView.push_event(socket, "request_robot_move", %{
+          fen: state.current_fen,
+          depth: 12
+        })
+
+      # Not robot's turn
+      true ->
+        socket
+    end
+  end
+
+  defp has_robot_player?(%{players: players}) do
+    Map.get(players.white || %{}, :robot?) == true ||
+      Map.get(players.black || %{}, :robot?) == true
+  end
+
+  defp has_robot_player?(_), do: false
+
+  defp is_robot_turn?(%{turn: turn, players: players}) do
+    player = Map.get(players, turn)
+    Map.get(player || %{}, :robot?) == true
+  end
+
+  defp is_robot_turn?(_), do: false
 
   defp show_surrender_button?(_role, nil), do: false
 
@@ -1900,10 +1988,11 @@ defmodule LiveChessWeb.GameLive do
           opponent_color = opposite_color(viewer_color)
           opponent = Map.get(players, opponent_color)
           opponent_display = overlay_player_display(opponent, opponent_color)
+          is_robot_opponent = opponent && Map.get(opponent, :robot?) == true
 
           sublabel =
-            if opponent_display == "the robot" do
-              "You defeated the robot opponent."
+            if is_robot_opponent do
+              "You defeated #{opponent_display}."
             else
               "#{color_label(viewer_color)} checkmated #{opponent_display}."
             end
@@ -1919,11 +2008,11 @@ defmodule LiveChessWeb.GameLive do
         status == :completed and viewer_color in [:white, :black] and winner in [:white, :black] ->
           winner_player = Map.get(players, winner)
           winner_display = overlay_player_display(winner_player, winner)
-          robot_win? = winner_display == "the robot"
+          robot_win? = winner_player && Map.get(winner_player, :robot?) == true
 
           sublabel =
             if robot_win? do
-              "The robot delivered checkmate."
+              "#{winner_display} delivered checkmate."
             else
               "#{winner_display} wins the game."
             end

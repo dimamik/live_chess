@@ -160,7 +160,57 @@ const playJoinSound = async () => {
   });
 };
 
+import {
+  initStockfish,
+  evaluatePosition,
+  stopEvaluation,
+} from "./stockfish-client.js";
+
 const Hooks = {
+  StockfishEvaluator: {
+    mounted() {
+      // Initialize Stockfish engine
+      initStockfish().catch((err) => {
+        console.error("Failed to initialize Stockfish:", err);
+      });
+
+      // Listen for evaluation requests from server
+      this.handleEvent("request_client_eval", async ({ fen, depth }) => {
+        try {
+          const evaluation = await evaluatePosition(fen, {
+            depth: depth || 12,
+          });
+          // Send evaluation back to server
+          this.pushEvent("client_eval_result", { evaluation });
+        } catch (err) {
+          console.error("Evaluation failed:", err);
+          this.pushEvent("client_eval_error", { error: err.message });
+        }
+      });
+
+      // Listen for robot move requests from server
+      this.handleEvent("request_robot_move", async ({ fen, depth }) => {
+        try {
+          const evaluation = await evaluatePosition(fen, {
+            depth: depth || 12,
+          });
+
+          if (evaluation.best_move) {
+            // Send the best move back to server for the robot to play
+            this.pushEvent("robot_move_ready", { move: evaluation.best_move });
+          } else {
+            this.pushEvent("robot_move_error", { error: "No best move found" });
+          }
+        } catch (err) {
+          console.error("Robot move failed:", err);
+          this.pushEvent("robot_move_error", { error: err.message });
+        }
+      });
+    },
+    destroyed() {
+      stopEvaluation();
+    },
+  },
   CopyShareLink: {
     mounted() {
       this.inputEl = this.el.querySelector("[data-share-input]");

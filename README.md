@@ -15,9 +15,11 @@ Multiplayer chess built with Phoenix LiveView. Players can spin up an ad-hoc roo
 
 1. Install dependencies and front-end tooling:
    - `mix setup`
-2. Launch the Phoenix server:
+2. Copy Stockfish files for client-side evaluation:
+   - `cp assets/node_modules/stockfish/src/stockfish-17.1-lite-single-03e3232.* priv/static/assets/`
+3. Launch the Phoenix server:
    - `mix phx.server`
-3. Visit [`http://localhost:4000`](http://localhost:4000) to open the lobby.
+4. Visit [`http://localhost:4000`](http://localhost:4000) to open the lobby.
 
 ## Playing a match
 
@@ -32,21 +34,16 @@ Multiplayer chess built with Phoenix LiveView. Players can spin up an ad-hoc roo
 - **Phoenix.Presence** tracks spectators and players with automatic cleanup when connections drop. See [docs/PRESENCE.md](docs/PRESENCE.md) for details.
 - The UI uses TailwindCSS utility classes that ship with new Phoenix projects—no external CSS framework required.
 
-## Engine configuration
+## Chess Engine
 
-The application uses a pluggable engine behaviour (`LiveChess.Engines.Engine`). By default, it talks to [chess-api.com](https://chess-api.com/) for Stockfish 17 evaluations. The legacy Lichess Cloud Eval client is still available and can be re-enabled if preferred.
+The application uses client-side Stockfish (WebAssembly) running in the browser for all chess analysis, evaluation, and robot opponent moves. This provides:
 
-| Variable                | Purpose                                                           | Default                    |
-| ----------------------- | ----------------------------------------------------------------- | -------------------------- |
-| `CHESS_API_URL`         | Override the chess-api.com endpoint                               | `https://chess-api.com/v1` |
-| `CHESS_API_VARIANTS`    | Number of principal variations (1-5)                              | `1`                        |
-| `CHESS_API_DEPTH`       | Search depth (1+)                                                 | `12`                       |
-| `CHESS_API_THINKING_MS` | Thinking time budget per request                                  | `50`                       |
-| `CHESS_API_TIMEOUT_MS`  | HTTP request timeout                                              | `8000`                     |
-| `CHESS_API_ENABLED`     | Disable the remote engine when set to `false`/`0`                 | `true`                     |
-| `STOCKFISH_*`           | Existing Stockfish Cloud Eval overrides (see `config/config.exs`) | _optional_                 |
+- Real-time position evaluation without server round-trips
+- Strong chess play for the robot opponent
+- Works completely offline once loaded
+- No server-side processing needed
 
-Switch `config :live_chess, :engine` to `LiveChess.Engines.Stockfish` if you want to revert to the Lichess client. When the engine is disabled or unavailable, the server falls back to the built-in heuristic evaluator and a simple random-move robot so that gameplay can continue offline.
+The Stockfish WASM files are automatically installed via npm and must be copied to `priv/static/assets/` as described in the setup steps above.
 
 ## Next steps
 

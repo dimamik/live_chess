@@ -426,6 +426,13 @@
     --piece-highlight: var(--piece-white-highlight);
   }
 
+  .piece-black {
+    --piece-fill: var(--piece-black-fill);
+    --piece-shadow: var(--piece-black-shadow);
+    --piece-outline: var(--piece-black-outline);
+    --piece-highlight: var(--piece-black-highlight);
+  }
+
   @media (max-width: 640px) {
     .chess-board-panel {
       padding: 0.2rem;

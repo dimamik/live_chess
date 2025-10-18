@@ -22,8 +22,7 @@ defmodule LiveChess.Application do
         {Phoenix.PubSub, name: LiveChess.PubSub},
         LiveChessWeb.Presence,
         {Registry, keys: :unique, name: LiveChess.GameRegistry},
-        LiveChess.GameSupervisor,
-        LiveChess.Engines.EvalCache
+        LiveChess.GameSupervisor
       ] ++
         restorer_child ++
         [

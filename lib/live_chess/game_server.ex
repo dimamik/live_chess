@@ -5,8 +5,6 @@ defmodule LiveChess.GameServer do
   require Logger
 
   alias Chess.Game, as: ChessGame
-  alias LiveChess.Analysis.Evaluator
-  alias LiveChess.Engines
   alias LiveChess.Games.{Notation, Storage}
 
   @type room_id :: String.t()
@@ -40,6 +38,10 @@ defmodule LiveChess.GameServer do
 
   def make_move(room_id, player_token, from, to, promotion \\ "q") do
     GenServer.call(via(room_id), {:move, player_token, from, to, promotion})
+  end
+
+  def robot_move(room_id, move) do
+    GenServer.call(via(room_id), {:robot_move, move})
   end
 
   def resign(room_id, player_token) do
@@ -117,23 +119,19 @@ defmodule LiveChess.GameServer do
           token: robot_token,
           connected?: true,
           robot?: true,
-          name: "Robot",
-          strategy: :engine
+          name: "Robot (Stockfish.wasm)"
         }
 
         robot_state = %{
           color: color,
           token: robot_token,
-          delay_ms: 700,
-          mode: :engine,
-          last_error: nil
+          delay_ms: 700
         }
 
         state =
           state
           |> put_in([:players, color], robot_player)
           |> Map.put(:robot, robot_state)
-          |> sync_robot_strategy()
 
         state = maybe_activate(state)
         state = maybe_queue_robot_move(state)
@@ -250,14 +248,43 @@ defmodule LiveChess.GameServer do
     {:reply, serialize(state), state}
   end
 
+  # Robot move handler - called when client sends a move from WASM Stockfish
+  # Handles both atom keys and string keys from JavaScript
+  def handle_call({:robot_move, move}, _from, state) when is_map(move) do
+    from = move[:from] || move["from"]
+    to = move[:to] || move["to"]
+    promotion = move[:promotion] || move["promotion"] || "q"
+
+    with %{robot: %{color: color}} <- state,
+         :active <- state.status,
+         ^color <- current_turn(state.game.current_fen),
+         {:ok, game} <- ChessGame.play(state.game, String.downcase("#{from}-#{to}"), promotion) do
+      updated =
+        state
+        |> cancel_robot_timer()
+        |> Map.put(:game, game)
+        |> Map.put(:last_move, %{
+          from: from,
+          to: to,
+          promotion: promotion,
+          color: color,
+          robot?: true
+        })
+        |> maybe_finish(game)
+        |> maybe_queue_robot_move()
+
+      updated = broadcast(updated)
+      {:reply, {:ok, serialize(updated)}, updated}
+    else
+      _ -> {:reply, {:error, :invalid_robot_move}, state}
+    end
+  end
+
   @impl true
   def handle_info(:robot_move, state) do
-    state = %{state | robot_timer: nil}
-
-    case perform_robot_move(state) do
-      {:ok, updated} -> {:noreply, updated}
-      {:error, _reason, updated} -> {:noreply, updated}
-    end
+    # When it's robot's turn, the client (LiveView) will request a move from WASM Stockfish
+    # The robot doesn't move here - it waits for the client to send the move
+    {:noreply, state}
   end
 
   @impl true
@@ -426,9 +453,8 @@ defmodule LiveChess.GameServer do
   defp serialize(state) do
     outcome = derive_outcome(state)
 
-    evaluation =
-      Map.get(state, :evaluation) ||
-        Evaluator.summary(state, outcome.winner)
+    # Evaluation now comes only from client-side, don't generate server-side fallback
+    evaluation = Map.get(state, :evaluation)
 
     {timeline, initial_fen} = build_timeline(state.game.history, state.game.current_fen)
     annotated_history = Notation.annotate(timeline)
@@ -439,7 +465,6 @@ defmodule LiveChess.GameServer do
       winner: outcome.winner,
       checking_color: outcome.checking_color,
       in_check: outcome.in_check,
-      robot_mode: Map.get(state.robot || %{}, :mode),
       players: serialize_players(state.players),
       last_move: state.last_move,
       board: LiveChess.Games.Board.from_game(state.game),
@@ -494,9 +519,7 @@ defmodule LiveChess.GameServer do
 
     base =
       if Map.get(player, :robot?) do
-        base
-        |> Map.put(:robot?, true)
-        |> maybe_put_strategy(Map.get(player, :strategy))
+        Map.put(base, :robot?, true)
       else
         base
       end
@@ -507,35 +530,8 @@ defmodule LiveChess.GameServer do
     end
   end
 
-  defp maybe_put_strategy(map, nil), do: map
-  defp maybe_put_strategy(map, strategy), do: Map.put(map, :strategy, strategy)
-
-  defp ensure_analysis(state) do
-    fen = game_fen(state)
-    outcome = derive_outcome(state)
-
-    if analysis_stale?(state, fen, outcome.winner) do
-      evaluation = Evaluator.summary(state, outcome.winner)
-
-      state
-      |> Map.put(:evaluation, evaluation)
-      |> Map.put(:evaluation_fen, fen)
-      |> Map.put(:evaluation_status, state.status)
-      |> Map.put(:evaluation_winner, outcome.winner)
-    else
-      state
-    end
-  end
-
-  defp analysis_stale?(state, fen, winner) do
-    Map.get(state, :evaluation) == nil ||
-      Map.get(state, :evaluation_fen) != fen ||
-      Map.get(state, :evaluation_status) != state.status ||
-      Map.get(state, :evaluation_winner) != winner
-  end
-
-  defp game_fen(%{game: %ChessGame{current_fen: fen}}) when is_binary(fen), do: fen
-  defp game_fen(_), do: nil
+  # Client-side evaluation only, no server-side analysis needed
+  defp ensure_analysis(state), do: state
 
   defp first_available_color(state) do
     cond do
@@ -581,7 +577,6 @@ defmodule LiveChess.GameServer do
     |> Map.put_new(:evaluation_fen, nil)
     |> Map.put_new(:evaluation_status, nil)
     |> Map.put_new(:evaluation_winner, nil)
-    |> sync_robot_strategy()
   end
 
   defp hydrate_state(_state, room_id), do: new_state(room_id)
@@ -651,204 +646,6 @@ defmodule LiveChess.GameServer do
     _ = Process.cancel_timer(state.robot_timer)
     %{state | robot_timer: nil}
   end
-
-  defp perform_robot_move(%{robot: %{color: color}} = state) do
-    cond do
-      state.status != :active ->
-        {:error, :inactive, state}
-
-      current_turn(state.game.current_fen) != color ->
-        {:error, :not_robot_turn, state}
-
-      true ->
-        case robot_pick_move(state) do
-          {:ok, %{from: from, to: to, promotion: promotion} = robot_move, state} ->
-            case ChessGame.play(state.game, String.downcase("#{from}-#{to}"), promotion) do
-              {:ok, game} ->
-                updated =
-                  state
-                  |> Map.put(:game, game)
-                  |> Map.put(:last_move, %{
-                    from: from,
-                    to: to,
-                    promotion: promotion,
-                    color: color,
-                    robot?: true,
-                    engine: Map.get(robot_move, :engine),
-                    uci: Map.get(robot_move, :uci)
-                  })
-                  |> maybe_finish(game)
-                  |> maybe_queue_robot_move()
-
-                updated = broadcast(updated)
-                {:ok, updated}
-
-              {:error, reason} ->
-                state = update_robot_strategy(state, :random, reason: reason)
-                {:error, reason, state}
-            end
-
-          {:error, reason, state} ->
-            {:error, reason, state}
-        end
-    end
-  end
-
-  defp perform_robot_move(state), do: {:ok, state}
-
-  defp robot_pick_move(%{game: %ChessGame{} = game, robot: %{color: color}} = state) do
-    case Engines.best_move(game.current_fen, color: color) do
-      {:ok, move} ->
-        case normalize_engine_move(move) do
-          {:ok, normalized} ->
-            state = update_robot_strategy(state, :engine, reason: nil)
-            {:ok, normalized, state}
-
-          {:error, _} ->
-            robot_pick_move_from_candidates(state, :invalid_move)
-        end
-
-      {:error, :disabled} ->
-        robot_pick_move_from_candidates(state, :disabled)
-
-      {:error, reason} ->
-        Logger.warning(fn ->
-          "Engine best_move failed for robot (#{inspect(reason)}); falling back to legal random move"
-        end)
-
-        robot_pick_move_from_candidates(state, reason)
-    end
-  end
-
-  defp robot_pick_move(state), do: {:error, :no_moves, state}
-
-  defp robot_pick_move_from_candidates(
-         %{game: %ChessGame{} = game, robot: %{color: color}} = state,
-         reason
-       ) do
-    case robot_move_candidates(game, color) do
-      [] ->
-        state = update_robot_strategy(state, :random, reason: reason)
-        {:error, :no_moves, state}
-
-      moves ->
-        move = Enum.random(moves)
-        state = update_robot_strategy(state, :random, reason: reason)
-        {:ok, move, state}
-    end
-  end
-
-  defp normalize_engine_move(%{from: from, to: to} = move)
-       when is_binary(from) and is_binary(to) do
-    promotion =
-      case Map.get(move, :promotion) do
-        nil -> "q"
-        value -> value |> to_string() |> String.downcase()
-      end
-
-    {:ok,
-     move
-     |> Map.put(:from, String.downcase(from))
-     |> Map.put(:to, String.downcase(to))
-     |> Map.put(:promotion, promotion)
-     |> Map.put_new(:engine, Engines.source())}
-  end
-
-  defp normalize_engine_move(_), do: {:error, :invalid_move}
-
-  defp robot_move_candidates(game, color) do
-    for file <- ?a..?h,
-        rank <- ?1..?8,
-        square = <<file, rank>>,
-        {:ok, piece} <- [fetch_piece(game, square)],
-        robot_piece?(piece, color),
-        dest <- legal_moves_for(game, square) do
-      from_square = String.downcase(square)
-      dest_square = String.downcase(dest)
-
-      %{
-        from: from_square,
-        to: dest_square,
-        promotion: robot_promotion(piece, dest_square),
-        engine: :random,
-        uci: from_square <> dest_square
-      }
-    end
-  end
-
-  defp robot_piece?(%{color: "w"}, :white), do: true
-  defp robot_piece?(%{color: "b"}, :black), do: true
-  defp robot_piece?(_, _), do: false
-
-  defp robot_promotion(%{role: :pawn}, destination) when is_binary(destination) do
-    case String.last(destination) do
-      "8" -> "q"
-      "1" -> "q"
-      _ -> "q"
-    end
-  end
-
-  defp robot_promotion(%{type: :pawn}, destination) when is_binary(destination) do
-    case String.last(destination) do
-      "8" -> "q"
-      "1" -> "q"
-      _ -> "q"
-    end
-  end
-
-  defp robot_promotion(_piece, _destination), do: "q"
-
-  defp sync_robot_strategy(%{robot: nil} = state), do: state
-
-  defp sync_robot_strategy(%{robot: robot} = state) when is_map(robot) do
-    robot =
-      robot
-      |> Map.put_new(:mode, :engine)
-      |> Map.put_new(:last_error, nil)
-
-    state
-    |> Map.put(:robot, robot)
-    |> put_robot_player_strategy(Map.get(robot, :mode))
-  end
-
-  defp sync_robot_strategy(state), do: state
-
-  defp update_robot_strategy(%{robot: nil} = state, _mode, _opts), do: state
-
-  defp update_robot_strategy(%{robot: robot} = state, mode, opts) when is_map(robot) do
-    reason = Keyword.get(opts, :reason, Map.get(robot, :last_error))
-
-    robot =
-      robot
-      |> Map.put(:mode, mode)
-      |> Map.put(:last_error, reason)
-
-    state
-    |> Map.put(:robot, robot)
-    |> put_robot_player_strategy(mode)
-  end
-
-  defp update_robot_strategy(state, _mode, _opts), do: state
-
-  defp put_robot_player_strategy(%{robot: %{color: color}} = state, mode) do
-    players = Map.get(state, :players, %{})
-
-    updated_players =
-      case Map.fetch(players, color) do
-        {:ok, nil} ->
-          players
-
-        {:ok, player} when is_map(player) ->
-          Map.put(players, color, player |> Map.put(:robot?, true) |> Map.put(:strategy, mode))
-
-        :error ->
-          players
-      end
-
-    %{state | players: updated_players}
-  end
-
-  defp put_robot_player_strategy(state, _mode), do: state
 
   defp persistable_state(state) do
     state
