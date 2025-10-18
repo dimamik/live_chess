@@ -4,6 +4,7 @@ defmodule LiveChessWeb.GameLive do
   alias Chess.Game, as: ChessGame
   alias LiveChess.Games
   alias LiveChess.Games.Notation
+  alias LiveChessWeb.Presence
 
   @auto_join_retry_ms 1_500
 
@@ -49,15 +50,27 @@ defmodule LiveChessWeb.GameLive do
 
     if connected?(socket) do
       Games.subscribe(room_id)
+      
+      # Subscribe to presence updates
+      topic = "game:#{room_id}"
+      Phoenix.PubSub.subscribe(LiveChess.PubSub, topic)
 
       case Games.connect(room_id, socket.assigns.player_token) do
         {:ok, %{role: role, state: state}} ->
+          # Track this connection in Presence
+          {:ok, _} = Presence.track(self(), topic, socket.assigns.player_token, %{
+            role: role,
+            joined_at: System.system_time(:second),
+            online_at: inspect(System.system_time(:second))
+          })
+          
           socket =
             socket
             |> assign(:role, role)
             |> assign(:board_ready?, true)
+            |> assign(:presence_topic, topic)
+            |> update_spectator_count_from_presence(topic)
 
-          {socket, state} = maybe_track_spectator(socket, role, state)
           socket = set_game_state(socket, state)
 
           {:ok, maybe_auto_join(socket, state)}
@@ -279,6 +292,13 @@ defmodule LiveChessWeb.GameLive do
       |> maybe_reset_selection(state)
 
     {:noreply, maybe_auto_join(socket, state)}
+  end
+
+  @impl true
+  def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff"}, socket) do
+    # Update spectator count when presence changes
+    topic = socket.assigns[:presence_topic] || "game:#{socket.assigns.room_id}"
+    {:noreply, update_spectator_count_from_presence(socket, topic)}
   end
 
   @impl true
@@ -701,19 +721,6 @@ defmodule LiveChessWeb.GameLive do
   end
 
   defp overlay_active?(_socket), do: false
-
-  defp maybe_track_spectator(socket, role, state) do
-    cond do
-      role == :spectator and socket.assigns[:player_token] ->
-        case Games.spectate(socket.assigns.room_id, socket.assigns.player_token) do
-          {:ok, %{state: new_state}} -> {socket, new_state}
-          _ -> {socket, state}
-        end
-
-      true ->
-        {socket, state}
-    end
-  end
 
   defp maybe_auto_join(socket, state) do
     seat = available_seat(state)
@@ -1392,6 +1399,36 @@ defmodule LiveChessWeb.GameLive do
       0 -> "No viewers"
       1 -> "1 viewer"
       count -> "#{count} viewers"
+    end
+  end
+
+  defp update_spectator_count_from_presence(socket, topic) do
+    presences = Presence.list(topic)
+    
+    # Count users with spectator role
+    spectator_count =
+      presences
+      |> Enum.filter(fn
+        {_id, %{metas: metas}} when is_list(metas) ->
+          Enum.any?(metas, fn
+            meta when is_map(meta) -> Map.get(meta, :role) == :spectator
+            _ -> false
+          end)
+        _ ->
+          false
+      end)
+      |> Enum.count()
+    
+    # Update game state with new spectator count
+    # Handle case where game might be nil during initial mount
+    case Map.get(socket.assigns, :game) do
+      nil ->
+        # Game not loaded yet, just return socket unchanged
+        socket
+      
+      game when is_map(game) ->
+        updated_game = Map.put(game, :spectator_count, spectator_count)
+        assign(socket, :game, updated_game)
     end
   end
 

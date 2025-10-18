@@ -9,6 +9,7 @@ Multiplayer chess built with Phoenix LiveView. Players can spin up an ad-hoc roo
 - Real-time board updates, move validation, and basic move history powered by the `chess` Hex package
 - Automatic session token issuance so visitors can reconnect to their seat without accounts
 - Remote engine-backed evaluation and robot moves via https://chess-api.com/, with Stockfish Cloud Eval support available via configuration and heuristics as a fallback
+- **Phoenix.Presence** integration for accurate, crash-resilient spectator tracking across distributed nodes
 
 ## Getting started
 
@@ -28,6 +29,7 @@ Multiplayer chess built with Phoenix LiveView. Players can spin up an ad-hoc roo
 
 - All game state lives in memory. `LiveChess.GameSupervisor` and `LiveChess.GameServer` coordinate lifecycle and move validation.
 - Game topics are broadcast over `Phoenix.PubSub`, allowing LiveViews to stay synced without manual polling.
+- **Phoenix.Presence** tracks spectators and players with automatic cleanup when connections drop. See [docs/PRESENCE.md](docs/PRESENCE.md) for details.
 - The UI uses TailwindCSS utility classes that ship with new Phoenix projects—no external CSS framework required.
 
 ## Engine configuration

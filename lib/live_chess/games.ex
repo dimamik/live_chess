@@ -50,10 +50,6 @@ defmodule LiveChess.Games do
     with_server(room_id, fn -> GameServer.connect(room_id, token) end)
   end
 
-  def spectate(room_id, token) do
-    with_server(room_id, fn -> GameServer.spectator(room_id, token) end)
-  end
-
   def leave(room_id, token) do
     with_server(room_id, fn -> GameServer.leave(room_id, token) end)
   end

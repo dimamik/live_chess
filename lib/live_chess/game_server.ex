@@ -30,10 +30,6 @@ defmodule LiveChess.GameServer do
     GenServer.call(via(room_id), {:connect, player_token})
   end
 
-  def spectator(room_id, viewer_token) do
-    GenServer.call(via(room_id), {:spectator, viewer_token})
-  end
-
   def add_robot(room_id, color) do
     GenServer.call(via(room_id), {:add_robot, color})
   end
@@ -176,22 +172,13 @@ defmodule LiveChess.GameServer do
         updated = maybe_broadcast(state, updated)
         {:reply, {:ok, payload(updated, token, color)}, updated}
 
-      MapSet.member?(state.spectators, token) ->
-        {:reply, {:ok, payload(state, token, :spectator)}, state}
-
       state.status == :waiting ->
         {:reply, {:ok, payload(state, token, :waiting)}, state}
 
       true ->
+        # Default to spectator role - Presence will track them
         {:reply, {:ok, payload(state, token, :spectator)}, state}
     end
-  end
-
-  def handle_call({:spectator, token}, _from, state) do
-    spectators = MapSet.put(state.spectators, token)
-    updated = %{state | spectators: spectators}
-    updated = maybe_broadcast(state, updated)
-    {:reply, {:ok, payload(updated, token, :spectator)}, updated}
   end
 
   def handle_call({:available_moves, token, from}, _from, state) do
@@ -283,8 +270,8 @@ defmodule LiveChess.GameServer do
           maybe_broadcast(state, updated)
 
         true ->
-          updated = %{state | spectators: MapSet.delete(state.spectators, token)}
-          maybe_broadcast(state, updated)
+          # Spectators are tracked by Presence, no need to update state
+          state
       end
 
     {:noreply, state}
@@ -293,19 +280,11 @@ defmodule LiveChess.GameServer do
   defp ensure_slot(state, token, color) do
     case state.players[color] do
       nil ->
-        state =
-          state
-          |> remove_spectator(token)
-          |> put_in([:players, color], %{token: token, connected?: true})
-
+        state = put_in(state, [:players, color], %{token: token, connected?: true})
         {:ok, state}
 
       %{token: ^token} = player ->
-        state =
-          state
-          |> remove_spectator(token)
-          |> put_in([:players, color], %{player | connected?: true})
-
+        state = put_in(state, [:players, color], %{player | connected?: true})
         {:ok, state}
 
       _other ->
@@ -470,8 +449,8 @@ defmodule LiveChess.GameServer do
       timeline: timeline,
       initial_fen: initial_fen,
       current_fen: state.game.current_fen,
-      evaluation: evaluation,
-      spectator_count: MapSet.size(state.spectators)
+      evaluation: evaluation
+      # spectator_count now comes from Phoenix.Presence
     }
   end
 
@@ -578,7 +557,6 @@ defmodule LiveChess.GameServer do
         white: nil,
         black: nil
       },
-      spectators: MapSet.new(),
       status: :waiting,
       last_move: nil,
       winner: nil,
@@ -594,11 +572,7 @@ defmodule LiveChess.GameServer do
   defp hydrate_state(state, room_id) when is_map(state) do
     state
     |> Map.put(:room_id, room_id)
-    |> Map.update(:spectators, MapSet.new(), fn
-      %MapSet{} = set -> set
-      other when is_list(other) -> MapSet.new(other)
-      _ -> MapSet.new()
-    end)
+    |> Map.delete(:spectators)  # Remove old spectators field if it exists
     |> Map.put_new(:winner, nil)
     |> Map.put_new(:robot, nil)
     |> Map.put(:robot_timer, nil)
@@ -617,12 +591,6 @@ defmodule LiveChess.GameServer do
       match?(%{token: ^token}, state.players.black) -> :black
       true -> :spectator
     end
-  end
-
-  defp remove_spectator(state, token) do
-    Map.update(state, :spectators, MapSet.new(), fn spectators ->
-      MapSet.delete(spectators, token)
-    end)
   end
 
   defp player_role(state, token) do

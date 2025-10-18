@@ -20,6 +20,7 @@ defmodule LiveChess.Application do
         LiveChess.Repo,
         {DNSCluster, query: Application.get_env(:live_chess, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: LiveChess.PubSub},
+        LiveChessWeb.Presence,
         {Registry, keys: :unique, name: LiveChess.GameRegistry},
         LiveChess.GameSupervisor,
         LiveChess.Engines.EvalCache
