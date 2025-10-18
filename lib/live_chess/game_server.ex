@@ -572,7 +572,8 @@ defmodule LiveChess.GameServer do
   defp hydrate_state(state, room_id) when is_map(state) do
     state
     |> Map.put(:room_id, room_id)
-    |> Map.delete(:spectators)  # Remove old spectators field if it exists
+    # Remove old spectators field if it exists
+    |> Map.delete(:spectators)
     |> Map.put_new(:winner, nil)
     |> Map.put_new(:robot, nil)
     |> Map.put(:robot_timer, nil)

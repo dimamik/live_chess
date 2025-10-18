@@ -50,7 +50,7 @@ defmodule LiveChessWeb.GameLive do
 
     if connected?(socket) do
       Games.subscribe(room_id)
-      
+
       # Subscribe to presence updates
       topic = "game:#{room_id}"
       Phoenix.PubSub.subscribe(LiveChess.PubSub, topic)
@@ -58,12 +58,13 @@ defmodule LiveChessWeb.GameLive do
       case Games.connect(room_id, socket.assigns.player_token) do
         {:ok, %{role: role, state: state}} ->
           # Track this connection in Presence
-          {:ok, _} = Presence.track(self(), topic, socket.assigns.player_token, %{
-            role: role,
-            joined_at: System.system_time(:second),
-            online_at: inspect(System.system_time(:second))
-          })
-          
+          {:ok, _} =
+            Presence.track(self(), topic, socket.assigns.player_token, %{
+              role: role,
+              joined_at: System.system_time(:second),
+              online_at: inspect(System.system_time(:second))
+            })
+
           socket =
             socket
             |> assign(:role, role)
@@ -821,12 +822,14 @@ defmodule LiveChessWeb.GameLive do
                 </div>
                 <.turn_indicator game={@game} player_token={@player_token} />
               </div>
-              <div class={"mt-2 text-sm " <> status_classes(@game)}>{status_line(@game)}</div>
-              <%= if robot_random_mode?(@game) do %>
-                <div class="mt-1 text-xs font-medium text-amber-600 dark:text-amber-400">
-                  Robot engine unavailable; making random moves.
-                </div>
-              <% end %>
+              <div class="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span class={"text-sm " <> status_classes(@game)}>{status_line(@game)}</span>
+                <%= if robot_random_mode?(@game) do %>
+                  <span class="text-xs font-medium text-amber-600 dark:text-amber-400">
+                    (Robot engine unavailable; making random moves)
+                  </span>
+                <% end %>
+              </div>
 
               <div class="chess-board-grid">
                 <%= for row <- board_rows(@game, @role, @board_override) do %>
@@ -1404,7 +1407,7 @@ defmodule LiveChessWeb.GameLive do
 
   defp update_spectator_count_from_presence(socket, topic) do
     presences = Presence.list(topic)
-    
+
     # Count users with spectator role
     spectator_count =
       presences
@@ -1414,18 +1417,19 @@ defmodule LiveChessWeb.GameLive do
             meta when is_map(meta) -> Map.get(meta, :role) == :spectator
             _ -> false
           end)
+
         _ ->
           false
       end)
       |> Enum.count()
-    
+
     # Update game state with new spectator count
     # Handle case where game might be nil during initial mount
     case Map.get(socket.assigns, :game) do
       nil ->
         # Game not loaded yet, just return socket unchanged
         socket
-      
+
       game when is_map(game) ->
         updated_game = Map.put(game, :spectator_count, spectator_count)
         assign(socket, :game, updated_game)

@@ -469,6 +469,25 @@
     fill: #6d6e6e !important;
   }
 
+  /* Override inline SVG styles for white pieces */
+  .piece-white path[style*="fill:#fff"],
+  .piece-white path[style*="fill: #fff"] {
+    fill: #f7f8f3 !important;
+  }
+
+  .piece-white path[style*="fill:#cfcecf"],
+  .piece-white path[style*="fill: #cfcecf"] {
+    fill: #dcded1 !important;
+  }
+
+  .piece-white .st1 {
+    fill: #f7f8f3 !important;
+  }
+
+  .piece-white .st2 {
+    fill: #dcded1 !important;
+  }
+
   .endgame-overlay {
     position: fixed;
     inset: 0;
