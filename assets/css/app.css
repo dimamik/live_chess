@@ -125,8 +125,7 @@
     --piece-black-highlight: #5e6a7b;
   }
 
-  /* Dark mode disabled */
-  /*
+  /* Dark mode enabled (board stays light) */
   html.dark,
   [data-theme="dark"] {
     --app-bg: #000000;
@@ -136,34 +135,32 @@
     --panel-border: rgba(148, 163, 184, 0.22);
     --panel-shadow: rgba(15, 23, 42, 0.65);
     --panel-muted: rgba(15, 23, 42, 0.78);
-    --board-light: #3f4c5a;
-    --board-dark: #1e293b;
-    --board-outline: rgba(148, 163, 184, 0.4);
-    --board-active-ring: rgba(96, 165, 250, 0.45);
-    --board-move-ring: rgba(20, 184, 166, 0.5);
-    --piece-white-fill: #f0f4ff;
-    --piece-white-shadow: #c5d2ed;
-    --piece-white-outline: #1a2332;
-    --piece-white-highlight: #ffffff;
-    --piece-black-fill: #0f172a;
-    --piece-black-shadow: #070d18;
-    --piece-black-outline: #cbd5e1;
-    --piece-black-highlight: #1e293b;
+    /* Board colors stay light mode - don't override these */
+    /* --board-light: #3f4c5a; */
+    /* --board-dark: #1e293b; */
+    /* --board-outline: rgba(148, 163, 184, 0.4); */
+    /* --board-active-ring: rgba(96, 165, 250, 0.45); */
+    /* --board-move-ring: rgba(20, 184, 166, 0.5); */
+    /* --piece-white-fill: #f0f4ff; */
+    /* --piece-white-shadow: #c5d2ed; */
+    /* --piece-white-outline: #1a2332; */
+    /* --piece-white-highlight: #ffffff; */
+    /* --piece-black-fill: #0f172a; */
+    /* --piece-black-shadow: #070d18; */
+    /* --piece-black-outline: #cbd5e1; */
+    /* --piece-black-highlight: #1e293b; */
   }
-  */
 
   body {
     background-color: var(--app-bg);
     color: var(--text-primary);
   }
 
-  /*
   html.dark body,
   [data-theme="dark"] body {
     background-color: #000000 !important;
     color: #f8fafc;
   }
-  */
 }
 
 /* This file is for your main application CSS */
@@ -185,7 +182,6 @@
     transition: background-color 150ms ease, border-color 150ms ease, box-shadow 200ms ease;
   }
 
-  /*
   html.dark .panel-surface,
   [data-theme="dark"] .panel-surface {
     background: #050505 !important;
@@ -198,7 +194,6 @@
   [data-theme="dark"] .panel-surface h3 {
     color: #f8fafc;
   }
-  */
 
   .chess-board-panel {
     border-radius: 1rem;
@@ -604,7 +599,6 @@
     left: var(--tear-left, 50%);
   }
 
-  /*
   html.dark .endgame-overlay--celebration .endgame-overlay__content {
     background: rgba(16, 95, 87, 0.92);
   }
@@ -612,7 +606,6 @@
   html.dark .endgame-overlay--defeat .endgame-overlay__content {
     background: rgba(15, 23, 42, 0.95);
   }
-  */
 }
 
 @keyframes overlay-fade {
