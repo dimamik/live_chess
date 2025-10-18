@@ -535,9 +535,18 @@ defmodule LiveChess.GameServer do
 
   defp first_available_color(state) do
     cond do
-      is_nil(state.players.white) -> :white
-      is_nil(state.players.black) -> :black
-      true -> Enum.random([:white, :black])
+      is_nil(state.players.white) and is_nil(state.players.black) ->
+        # Both slots empty - randomize the first player's color
+        Enum.random([:white, :black])
+
+      is_nil(state.players.white) ->
+        :white
+
+      is_nil(state.players.black) ->
+        :black
+
+      true ->
+        Enum.random([:white, :black])
     end
   end
 

@@ -72,7 +72,11 @@ defmodule LiveChessWeb.GameLive do
             |> assign(:presence_topic, topic)
             |> update_spectator_count_from_presence(topic)
 
-          socket = set_game_state(socket, state)
+          socket =
+            socket
+            |> set_game_state(state)
+            |> request_client_evaluation(state)
+            |> maybe_request_robot_move(state)
 
           {:ok, maybe_auto_join(socket, state)}
 
