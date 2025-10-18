@@ -171,6 +171,14 @@
     background-color: var(--app-bg);
     color: var(--text-primary);
     transition: background-color 150ms ease, color 150ms ease;
+    touch-action: manipulation;
+  }
+
+  /* Prevent double-tap zoom on mobile */
+  button,
+  input,
+  a {
+    touch-action: manipulation;
   }
 
   .panel-surface {
