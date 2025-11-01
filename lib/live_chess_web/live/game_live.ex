@@ -1392,12 +1392,19 @@ defmodule LiveChessWeb.GameLive do
 
   defp format_percentage(_), do: "0.0"
 
-  # Score text class - show green when player has advantage
+  # Score text class - show green when player has advantage, red when opponent has advantage
   # After flipping score (but not advantage), advantage still shows who is actually winning
   defp score_text_class(%{"advantage" => "white"}, :white), do: "text-emerald-500"
   defp score_text_class(%{advantage: :white}, :white), do: "text-emerald-500"
   defp score_text_class(%{"advantage" => "black"}, :black), do: "text-emerald-500"
   defp score_text_class(%{advantage: :black}, :black), do: "text-emerald-500"
+
+  # When opponent has advantage, show red
+  defp score_text_class(%{"advantage" => "black"}, :white), do: "text-rose-500"
+  defp score_text_class(%{advantage: :black}, :white), do: "text-rose-500"
+  defp score_text_class(%{"advantage" => "white"}, :black), do: "text-rose-500"
+  defp score_text_class(%{advantage: :white}, :black), do: "text-rose-500"
+
   # For spectators, show advantage color for whoever is winning
   defp score_text_class(%{"advantage" => adv}, _) when adv in ["white", "black"],
     do: "text-emerald-500"
