@@ -1168,10 +1168,10 @@ defmodule LiveChessWeb.GameLive do
     assigns =
       assigns
       |> assign(:overlay_class, overlay_class(Map.get(overlay, :type)))
+      |> assign(:overlay_type, Map.get(overlay, :type))
       |> assign(:heading, Map.get(overlay, :heading, ""))
       |> assign(:subtext, Map.get(overlay, :subtext))
       |> assign(:cta_label, Map.get(overlay, :cta_label, "Continue"))
-      |> assign(:particles, Map.get(overlay, :particles, []))
 
     ~H"""
     <div
@@ -1180,10 +1180,10 @@ defmodule LiveChessWeb.GameLive do
       aria-modal="true"
       aria-live="assertive"
       phx-click="dismiss_endgame_overlay"
+      phx-hook="EndgameCanvas"
+      id="endgame-overlay"
+      data-overlay-type={@overlay_type}
     >
-      <%= for particle <- @particles do %>
-        <span class={particle.class} style={particle.style}></span>
-      <% end %>
       <div class="endgame-overlay__content" phx-click="noop" phx-stop>
         <p class="endgame-overlay__heading">{@heading}</p>
         <%= if @subtext do %>
@@ -1469,8 +1469,7 @@ defmodule LiveChessWeb.GameLive do
             %{
               type: :celebration,
               heading: heading,
-              subtext: subtext,
-              particles: LiveChessWeb.EndgameParticles.celebration_particles()
+              subtext: subtext
             }
 
           winner == opponent_color ->
@@ -1480,8 +1479,7 @@ defmodule LiveChessWeb.GameLive do
             %{
               type: :defeat,
               heading: heading,
-              subtext: subtext,
-              particles: LiveChessWeb.EndgameParticles.defeat_particles()
+              subtext: subtext
             }
 
           true ->

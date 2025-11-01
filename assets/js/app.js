@@ -194,6 +194,8 @@ import {
   stopEvaluation,
 } from "./stockfish-client.js";
 
+import { initEndgameParticles } from "./endgame-particles.js";
+
 const Hooks = {
   StockfishEvaluator: {
     mounted() {
@@ -347,6 +349,38 @@ const Hooks = {
       resumeAudioContext();
     },
   },
+
+  EndgameCanvas: {
+    mounted() {
+      const overlayType = this.el.dataset.overlayType;
+
+      // Dispatch event to trigger canvas particles
+      window.dispatchEvent(
+        new CustomEvent("phx:endgame-overlay", {
+          detail: { type: overlayType },
+        })
+      );
+
+      // Store reference for cleanup
+      this.cleanupTriggered = false;
+    },
+
+    destroyed() {
+      // Trigger cleanup if not already done
+      if (!this.cleanupTriggered) {
+        this.cleanupTriggered = true;
+        window.dispatchEvent(new CustomEvent("phx:dismiss-endgame-overlay"));
+      }
+    },
+
+    beforeUpdate() {
+      // Trigger cleanup before component updates/removes
+      if (!this.cleanupTriggered) {
+        this.cleanupTriggered = true;
+        window.dispatchEvent(new CustomEvent("phx:dismiss-endgame-overlay"));
+      }
+    },
+  },
 };
 
 const liveSocket = new LiveSocket("/live", Socket, {
@@ -362,6 +396,9 @@ window.addEventListener("phx:page-loading-stop", (_info) => topbar.hide());
 
 // connect if there are any LiveViews on the page
 liveSocket.connect();
+
+// Initialize endgame particle system
+initEndgameParticles();
 
 // expose liveSocket on window for web console debug logs and latency simulation:
 // >> liveSocket.enableDebug()
