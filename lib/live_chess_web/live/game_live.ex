@@ -76,6 +76,7 @@ defmodule LiveChessWeb.GameLive do
           socket =
             socket
             |> set_game_state(state)
+            |> set_final_evaluation_if_finished(state)
             |> request_client_evaluation(state)
             |> maybe_request_robot_move(state)
 
@@ -312,6 +313,7 @@ defmodule LiveChessWeb.GameLive do
   @impl true
   def handle_info({:game_state, state}, socket) do
     previous_game = socket.assigns.game
+    new_status = Map.get(state, :status)
 
     socket =
       socket
@@ -322,6 +324,14 @@ defmodule LiveChessWeb.GameLive do
       |> maybe_reset_selection(state)
       |> request_client_evaluation(state)
       |> maybe_request_robot_move(state)
+
+    # Set or preserve definitive evaluation for finished games
+    socket =
+      if finished_status?(new_status) do
+        set_final_evaluation_if_finished(socket, state)
+      else
+        socket
+      end
 
     {:noreply, maybe_auto_join(socket, state)}
   end
@@ -455,6 +465,37 @@ defmodule LiveChessWeb.GameLive do
   end
 
   defp set_game_state(socket, _state), do: socket
+
+  defp set_final_evaluation_if_finished(socket, state) do
+    # Only set definitive evaluation if game is finished and has a winner
+    if finished_status?(Map.get(state, :status)) do
+      winner = Map.get(state, :winner)
+
+      if winner in [:white, :black] do
+        # Create definitive evaluation showing the winner has 100% advantage
+        final_evaluation = %{
+          "score_cp" => if(winner == :white, do: 10000, else: -10000),
+          "display_score" => if(winner == :white, do: "+♔", else: "−♔"),
+          "white_percentage" => if(winner == :white, do: 100.0, else: 0.0),
+          "advantage" => Atom.to_string(winner),
+          "source" => "game_result"
+        }
+
+        game = socket.assigns.game
+
+        if game do
+          updated_game = Map.put(game, :evaluation, final_evaluation)
+          assign(socket, :game, updated_game)
+        else
+          socket
+        end
+      else
+        socket
+      end
+    else
+      socket
+    end
+  end
 
   defp update_history_cursor(socket, desired_cursor) do
     history = history_assignments(socket.assigns.game, desired_cursor)
@@ -1191,7 +1232,9 @@ defmodule LiveChessWeb.GameLive do
         {white_pct, black_pct, "White", "Black"}
       end
 
-    # Flip the advantage indicator and score for black players
+    # Flip evaluation for Black players to show from their perspective
+    # Frontend always sends from White's perspective (positive = White better)
+    # For Black players, we flip it so positive = Black better (you're better)
     evaluation =
       if assigns.role == :black do
         flip_evaluation_for_black(assigns.evaluation)
@@ -1236,49 +1279,27 @@ defmodule LiveChessWeb.GameLive do
     """
   end
 
+  # Flip evaluation from White's perspective to Black's perspective
+  # Frontend sends: positive score = White better, advantage = "white"
+  # For Black player: we only flip the score sign, NOT the advantage
+  # The advantage still shows who is actually winning
   defp flip_evaluation_for_black(nil), do: nil
 
   defp flip_evaluation_for_black(evaluation) when is_map(evaluation) do
-    # Flip string key maps (from JavaScript)
+    # DON'T flip advantage - it should still show who is actually winning
+    # We only flip the display score sign so Black sees positive = good for them
+
+    # Flip display score sign: + becomes -, - becomes +
+    # So positive scores mean "good for you" for both White and Black players
     evaluation =
       cond do
-        Map.has_key?(evaluation, "advantage") ->
-          new_advantage =
-            case evaluation["advantage"] do
-              "white" -> "black"
-              "black" -> "white"
-              other -> other
-            end
+        Map.has_key?(evaluation, "display_score") ->
+          new_score = flip_score_sign(evaluation["display_score"])
+          Map.put(evaluation, "display_score", new_score)
 
-          new_score =
-            case evaluation["display_score"] do
-              nil -> nil
-              score when is_binary(score) -> flip_display_score(score)
-              score -> score
-            end
-
-          evaluation
-          |> Map.put("advantage", new_advantage)
-          |> Map.put("display_score", new_score)
-
-        Map.has_key?(evaluation, :advantage) ->
-          new_advantage =
-            case evaluation[:advantage] do
-              :white -> :black
-              :black -> :white
-              other -> other
-            end
-
-          new_score =
-            case evaluation[:display_score] do
-              nil -> nil
-              score when is_binary(score) -> flip_display_score(score)
-              score -> score
-            end
-
-          evaluation
-          |> Map.put(:advantage, new_advantage)
-          |> Map.put(:display_score, new_score)
+        Map.has_key?(evaluation, :display_score) ->
+          new_score = flip_score_sign(evaluation[:display_score])
+          Map.put(evaluation, :display_score, new_score)
 
         true ->
           evaluation
@@ -1287,13 +1308,15 @@ defmodule LiveChessWeb.GameLive do
     evaluation
   end
 
-  defp flip_display_score(score) when is_binary(score) do
+  defp flip_score_sign(nil), do: nil
+
+  defp flip_score_sign(score) when is_binary(score) do
     cond do
       String.starts_with?(score, "+M") ->
-        "-" <> String.slice(score, 1..-1//1)
+        "-M" <> String.slice(score, 2..-1//1)
 
       String.starts_with?(score, "-M") ->
-        "+" <> String.slice(score, 1..-1//1)
+        "+M" <> String.slice(score, 2..-1//1)
 
       String.starts_with?(score, "+") ->
         "-" <> String.slice(score, 1..-1//1)
@@ -1302,39 +1325,50 @@ defmodule LiveChessWeb.GameLive do
         "+" <> String.slice(score, 1..-1//1)
 
       true ->
-        # If it's just a number without sign, add appropriate sign
-        case Float.parse(score) do
-          {num, _} when num > 0 -> "-#{score}"
-          {num, _} when num < 0 -> "+#{String.slice(score, 1..-1//1)}"
-          _ -> score
-        end
+        score
     end
   end
 
+  defp flip_score_sign(score), do: score
+
   # Handle both atom keys (server-side) and string keys (client-side)
+  # After flipping for Black, advantage matching player color = player is winning
   defp evaluation_caption(%{"advantage" => "white", "display_score" => score}, :white),
     do: append_score("You are better", score)
 
-  defp evaluation_caption(%{"advantage" => "white", "display_score" => score}, _role),
+  defp evaluation_caption(%{"advantage" => "black", "display_score" => score}, :white),
     do: append_score("Opponent is better", score)
 
   defp evaluation_caption(%{advantage: :white, display_score: score}, :white),
     do: append_score("You are better", score)
 
-  defp evaluation_caption(%{advantage: :white, display_score: score}, _role),
+  defp evaluation_caption(%{advantage: :black, display_score: score}, :white),
     do: append_score("Opponent is better", score)
 
   defp evaluation_caption(%{"advantage" => "black", "display_score" => score}, :black),
     do: append_score("You are better", score)
 
-  defp evaluation_caption(%{"advantage" => "black", "display_score" => score}, _role),
+  defp evaluation_caption(%{"advantage" => "white", "display_score" => score}, :black),
     do: append_score("Opponent is better", score)
 
   defp evaluation_caption(%{advantage: :black, display_score: score}, :black),
     do: append_score("You are better", score)
 
-  defp evaluation_caption(%{advantage: :black, display_score: score}, _role),
+  defp evaluation_caption(%{advantage: :white, display_score: score}, :black),
     do: append_score("Opponent is better", score)
+
+  # Spectators see neutral language
+  defp evaluation_caption(%{"advantage" => "white", "display_score" => score}, _role),
+    do: append_score("White is better", score)
+
+  defp evaluation_caption(%{advantage: :white, display_score: score}, _role),
+    do: append_score("White is better", score)
+
+  defp evaluation_caption(%{"advantage" => "black", "display_score" => score}, _role),
+    do: append_score("Black is better", score)
+
+  defp evaluation_caption(%{advantage: :black, display_score: score}, _role),
+    do: append_score("Black is better", score)
 
   defp evaluation_caption(%{"display_score" => score}, _role),
     do: append_score("Even position", score)
@@ -1358,21 +1392,37 @@ defmodule LiveChessWeb.GameLive do
 
   defp format_percentage(_), do: "0.0"
 
-  # Score text class - after flipping, "white" advantage means player advantage
-  defp score_text_class(%{"advantage" => "white"}, _role), do: "text-emerald-500"
-  defp score_text_class(%{advantage: :white}, _role), do: "text-emerald-500"
+  # Score text class - show green when player has advantage
+  # After flipping score (but not advantage), advantage still shows who is actually winning
+  defp score_text_class(%{"advantage" => "white"}, :white), do: "text-emerald-500"
+  defp score_text_class(%{advantage: :white}, :white), do: "text-emerald-500"
+  defp score_text_class(%{"advantage" => "black"}, :black), do: "text-emerald-500"
+  defp score_text_class(%{advantage: :black}, :black), do: "text-emerald-500"
+  # For spectators, show advantage color for whoever is winning
+  defp score_text_class(%{"advantage" => adv}, _) when adv in ["white", "black"],
+    do: "text-emerald-500"
 
-  defp score_text_class(%{"advantage" => "black"}, _role),
-    do: "text-slate-500 dark:text-slate-300"
-
-  defp score_text_class(%{advantage: :black}, _role), do: "text-slate-500 dark:text-slate-300"
+  defp score_text_class(%{advantage: adv}, _) when adv in [:white, :black], do: "text-emerald-500"
   defp score_text_class(_, _), do: "text-slate-500 dark:text-slate-300"
 
-  # Evaluation indicator - after flipping, show "You" vs "Opponent"
-  defp evaluation_indicator(%{"advantage" => "white"}, _role), do: "Your edge"
-  defp evaluation_indicator(%{advantage: :white}, _role), do: "Your edge"
-  defp evaluation_indicator(%{"advantage" => "black"}, _role), do: "Opponent edge"
-  defp evaluation_indicator(%{advantage: :black}, _role), do: "Opponent edge"
+  # Evaluation indicator - show "Your edge" when advantage matches player's color
+  # Advantage is NOT flipped, so it shows who is actually winning
+  defp evaluation_indicator(%{"advantage" => "white"}, :white), do: "Your edge"
+  defp evaluation_indicator(%{advantage: :white}, :white), do: "Your edge"
+  defp evaluation_indicator(%{"advantage" => "black"}, :black), do: "Your edge"
+  defp evaluation_indicator(%{advantage: :black}, :black), do: "Your edge"
+
+  defp evaluation_indicator(%{"advantage" => "white"}, :black), do: "Opponent edge"
+  defp evaluation_indicator(%{advantage: :white}, :black), do: "Opponent edge"
+  defp evaluation_indicator(%{"advantage" => "black"}, :white), do: "Opponent edge"
+  defp evaluation_indicator(%{advantage: :black}, :white), do: "Opponent edge"
+
+  # For spectators, show which color has advantage
+  defp evaluation_indicator(%{"advantage" => "white"}, _), do: "White edge"
+  defp evaluation_indicator(%{advantage: :white}, _), do: "White edge"
+  defp evaluation_indicator(%{"advantage" => "black"}, _), do: "Black edge"
+  defp evaluation_indicator(%{advantage: :black}, _), do: "Black edge"
+
   defp evaluation_indicator(_, _), do: "Balanced"
 
   defp append_score(label, score) when is_binary(score) do
@@ -1669,8 +1719,11 @@ defmodule LiveChessWeb.GameLive do
   end
 
   defp request_client_evaluation(socket, state) do
-    # Request client-side evaluation via JavaScript hook
-    if Map.get(state, :current_fen) do
+    # Only request evaluation for active/in-progress games, not finished games
+    # This preserves the final evaluation when the game ends
+    status = Map.get(state, :status)
+
+    if Map.get(state, :current_fen) && !finished_status?(status) do
       Phoenix.LiveView.push_event(socket, "request_client_eval", %{
         fen: state.current_fen,
         depth: 12

@@ -119,20 +119,38 @@ export async function evaluatePosition(fen, options = {}) {
 
 /**
  * Convert Stockfish score to evaluation format expected by the app
+ * Always returns evaluation from White's perspective (positive = White better)
  */
 function convertToEvaluation(fen, score) {
-  const scoreCp =
+  // Parse FEN to determine whose turn it is
+  // FEN format: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+  // The second field (w/b) indicates whose turn it is
+  const fenParts = fen.split(" ");
+  const isBlackToMove = fenParts[1] === "b";
+
+  // Stockfish returns scores from the side to move's perspective
+  // We need to invert if it's Black's turn to get White's perspective
+  let scoreCp =
     score.type === "mate" ? (score.value > 0 ? 10000 : -10000) : score.value;
 
-  const advantage = scoreCp > 40 ? "white" : scoreCp < -40 ? "black" : "equal";
+  // Negate score when it's Black's turn so we always report from White's perspective
+  if (isBlackToMove) {
+    scoreCp = -scoreCp;
+  }
 
+  // Advantage based on White's perspective
+  // Use 50 centipawns (0.5 pawns) threshold - anything more is a clear advantage
+  const advantage = scoreCp > 50 ? "white" : scoreCp < -50 ? "black" : "equal";
+
+  // Display score from White's perspective
   const displayScore =
     score.type === "mate"
-      ? score.value > 0
+      ? scoreCp > 0
         ? `+M${Math.abs(score.value)}`
         : `-M${Math.abs(score.value)}`
       : formatScore(scoreCp);
 
+  // White's win percentage
   const whitePercentage = clampToPercentage(scoreCp);
 
   const evaluation = {
