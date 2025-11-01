@@ -160,14 +160,97 @@ const playJoinSound = async () => {
   });
 };
 
+// Detect iOS devices
+const detectiOS = () => {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  const toMatch = [/iPhone/i, /iPad/i, /iPod/i];
+  return toMatch.some((toMatchItem) => {
+    return RegExp(toMatchItem).exec(navigator.userAgent);
+  });
+};
+
+// Detect Android devices
+const detectAndroid = () => {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  const toMatch = [/Android/i, /webOS/i, /BlackBerry/i, /Windows Phone/i];
+  return toMatch.some((toMatchItem) => {
+    return RegExp(toMatchItem).exec(navigator.userAgent);
+  });
+};
+
+// Haptic feedback setup for iOS (using Safari 18.0+ input[switch] feature)
+// Based on https://github.com/posaune0423/use-haptic
+// CRITICAL: This must be triggered synchronously during a user interaction event
+let hapticInput = null;
+let hapticLabel = null;
+
+const setupHapticElements = () => {
+  // Only set up for iOS devices
+  if (!detectiOS() || hapticInput) {
+    return;
+  }
+
+  try {
+    // Create input[type="checkbox"][switch] for iOS haptic feedback
+    hapticInput = document.createElement("input");
+    hapticInput.type = "checkbox";
+    hapticInput.id = "haptic-switch";
+    hapticInput.setAttribute("switch", "");
+    hapticInput.style.cssText = "display: none;";
+
+    // Create label associated with the input
+    hapticLabel = document.createElement("label");
+    hapticLabel.htmlFor = "haptic-switch";
+    hapticLabel.style.cssText = "display: none;";
+
+    // Append directly to body
+    document.body.appendChild(hapticInput);
+    document.body.appendChild(hapticLabel);
+
+    console.log("iOS haptic feedback initialized");
+  } catch (error) {
+    console.error("Failed to setup haptic elements:", error);
+  }
+};
+
+// Initialize haptic elements when DOM is ready
+if (typeof document !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", setupHapticElements);
+  } else {
+    setupHapticElements();
+  }
+}
+
 // Vibration helpers for mobile devices
+// MUST be called synchronously during a user interaction event for iOS haptic to work
 const vibrateDevice = (pattern) => {
-  // Check if vibration API is available (mobile devices)
-  if (typeof navigator !== "undefined" && navigator.vibrate) {
+  const isIOS = detectiOS();
+
+  if (isIOS) {
+    // Ensure elements are set up
+    if (!hapticLabel) {
+      setupHapticElements();
+    }
+
+    if (hapticLabel) {
+      try {
+        // Click the label synchronously during user interaction
+        // This triggers the checkbox which provides native haptic feedback on iOS
+        hapticLabel.click();
+      } catch (error) {
+        console.debug("iOS haptic failed:", error);
+      }
+    }
+  } else if (typeof navigator !== "undefined" && navigator.vibrate) {
+    // Use Vibration API for Android and other devices
     try {
       navigator.vibrate(pattern);
     } catch (error) {
-      // Vibration not supported or failed silently
       console.debug("Vibration failed:", error);
     }
   }
@@ -194,7 +277,46 @@ import {
   stopEvaluation,
 } from "./stockfish-client.js";
 
+import { initEndgameParticles } from "./endgame-particles.js";
+
 const Hooks = {
+  ChessBoard: {
+    mounted() {
+      // Attach haptic feedback to square clicks
+      // This MUST be called synchronously during the user's click event
+      this.handleSquareClick = (event) => {
+        // Check if clicking on a button (chess square)
+        const button = event.target.closest(
+          'button[phx-click="select_square"]'
+        );
+        if (button) {
+          // Only trigger haptic if this square has a move-dot
+          // (meaning it's a valid move destination, not just selecting your piece)
+          const hasMoveIndicator = button.querySelector(".move-dot") !== null;
+
+          if (hasMoveIndicator) {
+            // Trigger haptic feedback immediately on move
+            // For iOS, this toggles the hidden checkbox which triggers native haptic
+            // For Android, this calls navigator.vibrate()
+            vibrateDevice(50);
+          }
+        }
+      };
+
+      // Listen for clicks - must be synchronous with user interaction
+      // Use capture phase to ensure we catch it before LiveView
+      this.el.addEventListener("click", this.handleSquareClick, {
+        capture: true,
+      });
+    },
+    destroyed() {
+      if (this.handleSquareClick) {
+        this.el.removeEventListener("click", this.handleSquareClick, {
+          capture: true,
+        });
+      }
+    },
+  },
   StockfishEvaluator: {
     mounted() {
       // Get the Stockfish path from the data attribute (works with digested assets in production)
@@ -347,6 +469,38 @@ const Hooks = {
       resumeAudioContext();
     },
   },
+
+  EndgameCanvas: {
+    mounted() {
+      const overlayType = this.el.dataset.overlayType;
+
+      // Dispatch event to trigger canvas particles
+      window.dispatchEvent(
+        new CustomEvent("phx:endgame-overlay", {
+          detail: { type: overlayType },
+        })
+      );
+
+      // Store reference for cleanup
+      this.cleanupTriggered = false;
+    },
+
+    destroyed() {
+      // Trigger cleanup if not already done
+      if (!this.cleanupTriggered) {
+        this.cleanupTriggered = true;
+        window.dispatchEvent(new CustomEvent("phx:dismiss-endgame-overlay"));
+      }
+    },
+
+    beforeUpdate() {
+      // Trigger cleanup before component updates/removes
+      if (!this.cleanupTriggered) {
+        this.cleanupTriggered = true;
+        window.dispatchEvent(new CustomEvent("phx:dismiss-endgame-overlay"));
+      }
+    },
+  },
 };
 
 const liveSocket = new LiveSocket("/live", Socket, {
@@ -362,6 +516,9 @@ window.addEventListener("phx:page-loading-stop", (_info) => topbar.hide());
 
 // connect if there are any LiveViews on the page
 liveSocket.connect();
+
+// Initialize endgame particle system
+initEndgameParticles();
 
 // expose liveSocket on window for web console debug logs and latency simulation:
 // >> liveSocket.enableDebug()

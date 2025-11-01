@@ -26,19 +26,24 @@ defmodule LiveChessWeb.EndgameParticles do
           "#c084fc",
           "#fde047",
           "#fb7185",
-          "#fca5a5"
+          "#fca5a5",
+          "#10b981",
+          "#8b5cf6",
+          "#06b6d4",
+          "#f59e0b",
+          "#ec4899"
         ]
 
-    count = opts[:confetti_count] || 160
+    count = opts[:confetti_count] || 200
 
     1..count
     |> Enum.map(fn i ->
       left_val = rem(i * 11, 140) - 20
       left = "#{left_val}%"
-      delay = "#{Float.round((i - 1) * 0.02, 2)}s"
-      duration = "#{Float.round(3.0 + rem(i, 8) * 0.28, 2)}s"
+      delay = "#{Float.round((i - 1) * 0.015, 3)}s"
+      duration = "#{Float.round(2.8 + rem(i, 10) * 0.35, 2)}s"
       color = Enum.at(colors, rem(i - 1, length(colors)))
-      size = "#{Float.round(0.6 + rem(i, 5) * 0.18, 2)}rem"
+      size = "#{Float.round(0.55 + rem(i, 6) * 0.2, 2)}rem"
 
       confetti_particle(%{left: left, delay: delay, duration: duration, color: color, size: size})
     end)
@@ -46,15 +51,15 @@ defmodule LiveChessWeb.EndgameParticles do
 
   @doc "Return a list of tear particle maps (class + style)."
   def defeat_particles(opts \\ []) do
-    count = opts[:tear_count] || 220
+    count = opts[:tear_count] || 280
 
     1..count
     |> Enum.map(fn i ->
       left_val = rem(i * 6, 140) - 20
       left = "#{left_val}%"
-      delay = "#{Float.round((i - 1) * 0.015, 3)}s"
-      duration = "#{Float.round(2.2 + rem(i, 6) * 0.2, 2)}s"
-      size = "#{Float.round(0.45 + rem(i, 4) * 0.12, 2)}rem"
+      delay = "#{Float.round((i - 1) * 0.012, 3)}s"
+      duration = "#{Float.round(2.0 + rem(i, 7) * 0.25, 2)}s"
+      size = "#{Float.round(0.4 + rem(i, 5) * 0.14, 2)}rem"
 
       tear_particle(%{left: left, delay: delay, duration: duration, size: size})
     end)

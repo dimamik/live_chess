@@ -474,7 +474,7 @@ defmodule LiveChessWeb.GameLive do
       if winner in [:white, :black] do
         # Create definitive evaluation showing the winner has 100% advantage
         final_evaluation = %{
-          "score_cp" => if(winner == :white, do: 10000, else: -10000),
+          "score_cp" => if(winner == :white, do: 10_000, else: -10_000),
           "display_score" => if(winner == :white, do: "+♔", else: "−♔"),
           "white_percentage" => if(winner == :white, do: 100.0, else: 0.0),
           "advantage" => Atom.to_string(winner),
@@ -904,7 +904,7 @@ defmodule LiveChessWeb.GameLive do
                 <span class={"text-sm " <> status_classes(@game)}>{status_line(@game)}</span>
               </div>
 
-              <div class="chess-board-grid">
+              <div class="chess-board-grid" phx-hook="ChessBoard" id="chess-board">
                 <%= for row <- board_rows(@game, @role, @board_override) do %>
                   <%= for cell <- row do %>
                     <button
@@ -943,6 +943,26 @@ defmodule LiveChessWeb.GameLive do
           <% end %>
         </div>
 
+        <div class="panel-surface">
+          <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Advantage</h3>
+          <.evaluation_panel evaluation={@game && Map.get(@game, :evaluation)} role={@role} />
+        </div>
+        <div class="panel-surface">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Players</h3>
+            <span
+              class={viewer_count_badge_classes(@game, @role)}
+              aria-label={"#{viewer_count_label(@game, @role)} watching"}
+            >
+              <span aria-hidden="true">👀</span>
+              {viewer_count_label(@game, @role)}
+            </span>
+          </div>
+          <div class="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-300">
+            <.player_line game={@game} color={:white} token={@player_token} />
+            <.player_line game={@game} color={:black} token={@player_token} />
+          </div>
+        </div>
         <div class="w-full space-y-4 lg:max-w-sm">
           <div class="panel-surface">
             <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Share</h3>
@@ -974,28 +994,6 @@ defmodule LiveChessWeb.GameLive do
                 Room code: <span class="font-mono uppercase">{@room_id}</span>
               </p>
             </div>
-          </div>
-
-          <div class="panel-surface">
-            <div class="flex items-center justify-between gap-3">
-              <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Players</h3>
-              <span
-                class={viewer_count_badge_classes(@game, @role)}
-                aria-label={"#{viewer_count_label(@game, @role)} watching"}
-              >
-                <span aria-hidden="true">👀</span>
-                {viewer_count_label(@game, @role)}
-              </span>
-            </div>
-            <div class="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-300">
-              <.player_line game={@game} color={:white} token={@player_token} />
-              <.player_line game={@game} color={:black} token={@player_token} />
-            </div>
-          </div>
-
-          <div class="panel-surface">
-            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Advantage</h3>
-            <.evaluation_panel evaluation={@game && Map.get(@game, :evaluation)} role={@role} />
           </div>
 
           <div class="panel-surface">
@@ -1168,10 +1166,10 @@ defmodule LiveChessWeb.GameLive do
     assigns =
       assigns
       |> assign(:overlay_class, overlay_class(Map.get(overlay, :type)))
+      |> assign(:overlay_type, Map.get(overlay, :type))
       |> assign(:heading, Map.get(overlay, :heading, ""))
       |> assign(:subtext, Map.get(overlay, :subtext))
       |> assign(:cta_label, Map.get(overlay, :cta_label, "Continue"))
-      |> assign(:particles, Map.get(overlay, :particles, []))
 
     ~H"""
     <div
@@ -1180,10 +1178,10 @@ defmodule LiveChessWeb.GameLive do
       aria-modal="true"
       aria-live="assertive"
       phx-click="dismiss_endgame_overlay"
+      phx-hook="EndgameCanvas"
+      id="endgame-overlay"
+      data-overlay-type={@overlay_type}
     >
-      <%= for particle <- @particles do %>
-        <span class={particle.class} style={particle.style}></span>
-      <% end %>
       <div class="endgame-overlay__content" phx-click="noop" phx-stop>
         <p class="endgame-overlay__heading">{@heading}</p>
         <%= if @subtext do %>
@@ -1469,8 +1467,7 @@ defmodule LiveChessWeb.GameLive do
             %{
               type: :celebration,
               heading: heading,
-              subtext: subtext,
-              particles: LiveChessWeb.EndgameParticles.celebration_particles()
+              subtext: subtext
             }
 
           winner == opponent_color ->
@@ -1480,8 +1477,7 @@ defmodule LiveChessWeb.GameLive do
             %{
               type: :defeat,
               heading: heading,
-              subtext: subtext,
-              particles: LiveChessWeb.EndgameParticles.defeat_particles()
+              subtext: subtext
             }
 
           true ->

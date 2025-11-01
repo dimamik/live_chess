@@ -14,15 +14,6 @@ defmodule LiveChess.GameServerTest do
     room_id = "test_#{:erlang.unique_integer([:positive])}"
     player_token = Games.generate_player_token()
 
-    # Clean up after test
-    on_exit(fn ->
-      # Stop the game server if it's running
-      case Registry.lookup(LiveChess.GameRegistry, room_id) do
-        [{pid, _}] -> GenServer.stop(pid, :normal)
-        [] -> :ok
-      end
-    end)
-
     %{room_id: room_id, player_token: player_token}
   end
 
