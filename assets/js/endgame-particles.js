@@ -356,15 +356,24 @@ export function initEndgameParticles() {
 
     // Clean up when overlay is dismissed
     const cleanup = () => {
-      // Stop spawning new particles but let existing ones finish falling
+      // Stop spawning new particles immediately
       system.stopSpawning();
 
-      // Clean up after particles have time to fall off screen
-      setTimeout(() => {
+      // For tears, clear immediately
+      // For confetti, let them finish falling
+      if (type === "loss") {
+        // Tears: clear immediately
         system.clear();
         canvas.remove();
         window.currentParticleSystem = null;
-      }, 3000); // Give 3 seconds for particles to fall off screen
+      } else {
+        // Confetti: give time to fall off screen
+        setTimeout(() => {
+          system.clear();
+          canvas.remove();
+          window.currentParticleSystem = null;
+        }, 3000); // Give 3 seconds for particles to fall off screen
+      }
 
       document.removeEventListener("phx:dismiss-endgame-overlay", cleanup);
     };
