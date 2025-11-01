@@ -474,7 +474,7 @@ defmodule LiveChessWeb.GameLive do
       if winner in [:white, :black] do
         # Create definitive evaluation showing the winner has 100% advantage
         final_evaluation = %{
-          "score_cp" => if(winner == :white, do: 10000, else: -10000),
+          "score_cp" => if(winner == :white, do: 10_000, else: -10_000),
           "display_score" => if(winner == :white, do: "+♔", else: "−♔"),
           "white_percentage" => if(winner == :white, do: 100.0, else: 0.0),
           "advantage" => Atom.to_string(winner),
