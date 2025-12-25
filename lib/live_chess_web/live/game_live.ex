@@ -943,27 +943,27 @@ defmodule LiveChessWeb.GameLive do
           <% end %>
         </div>
 
-        <div class="panel-surface">
-          <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Advantage</h3>
-          <.evaluation_panel evaluation={@game && Map.get(@game, :evaluation)} role={@role} />
-        </div>
-        <div class="panel-surface">
-          <div class="flex items-center justify-between gap-3">
-            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Players</h3>
-            <span
-              class={viewer_count_badge_classes(@game, @role)}
-              aria-label={"#{viewer_count_label(@game, @role)} watching"}
-            >
-              <span aria-hidden="true">👀</span>
-              {viewer_count_label(@game, @role)}
-            </span>
-          </div>
-          <div class="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-300">
-            <.player_line game={@game} color={:white} token={@player_token} />
-            <.player_line game={@game} color={:black} token={@player_token} />
-          </div>
-        </div>
         <div class="w-full space-y-4 lg:max-w-sm">
+          <div class="panel-surface">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Advantage</h3>
+            <.evaluation_panel evaluation={@game && Map.get(@game, :evaluation)} role={@role} />
+          </div>
+          <div class="panel-surface">
+            <div class="flex items-center justify-between gap-3">
+              <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Players</h3>
+              <span
+                class={viewer_count_badge_classes(@game, @role)}
+                aria-label={"#{viewer_count_label(@game, @role)} watching"}
+              >
+                <span aria-hidden="true">👀</span>
+                {viewer_count_label(@game, @role)}
+              </span>
+            </div>
+            <div class="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-300">
+              <.player_line game={@game} color={:white} token={@player_token} />
+              <.player_line game={@game} color={:black} token={@player_token} />
+            </div>
+          </div>
           <div class="panel-surface">
             <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Share</h3>
             <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
