@@ -61,7 +61,7 @@ defmodule LiveChessWeb.LobbyLive do
     {:noreply, assign(socket, :room_code, normalize_room(room_code))}
   end
 
-  def handle_event("join_game", _params, socket) do
+  def handle_event("join_room", _params, socket) do
     room_id = socket.assigns.room_code
 
     if room_id == "" do
