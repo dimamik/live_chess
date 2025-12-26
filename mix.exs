@@ -57,7 +57,9 @@ defmodule LiveChess.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.1.1"},
       {:bandit, "~> 1.5"},
-      {:chess, "~> 0.4.3"},
+      # Chess library had a bug with checkmate
+      # detection
+      {:chess, github: "dimamik/chess", branch: "master"},
       {:ecto_sql, "~> 3.11"},
       {:postgrex, "~> 0.17"},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false, warn_if_outdated: true},
