@@ -50,11 +50,10 @@ defmodule LiveChessWeb.GameLive do
       |> assign(:page_title, "LiveView Chess")
 
     if connected?(socket) do
-      Games.subscribe(room_id)
-
-      # Subscribe to presence updates
+      # Games.subscribe/1 already subscribes to "game:#{room_id}", which is also
+      # the presence topic - a single subscription is enough for both.
       topic = "game:#{room_id}"
-      Phoenix.PubSub.subscribe(LiveChess.PubSub, topic)
+      Games.subscribe(room_id)
 
       case Games.connect(room_id, socket.assigns.player_token) do
         {:ok, %{role: role, state: state}} ->
@@ -266,12 +265,15 @@ defmodule LiveChessWeb.GameLive do
   end
 
   def handle_event("robot_move_ready", %{"move" => move}, socket) do
-    # Client has calculated the best move for the robot
-    room_id = socket.assigns.room_id
-
-    case LiveChess.GameServer.robot_move(room_id, move) do
-      {:ok, _state} -> {:noreply, socket}
-      {:error, _reason} -> {:noreply, socket}
+    # Only the human player in a robot game should submit robot moves.
+    # Spectators and non-robot-game players must be rejected.
+    if authorized_robot_mover?(socket) do
+      case LiveChess.GameServer.robot_move(socket.assigns.room_id, move) do
+        {:ok, _state} -> {:noreply, socket}
+        {:error, _reason} -> {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
     end
   end
 
@@ -397,19 +399,35 @@ defmodule LiveChessWeb.GameLive do
   end
 
   defp maybe_reset_selection(socket, state) do
+    square = socket.assigns.selected_square
+
     cond do
-      socket.assigns.selected_square == nil ->
+      square == nil ->
         socket
 
-      piece_for(state, socket.assigns.selected_square) == nil ->
+      # Selected square is now empty, or the piece there is no longer the player's:
+      # clear selection.
+      not selection_still_owned?(state, square, socket.assigns.role) ->
         socket
         |> assign(:selected_square, nil)
         |> assign(:available_moves, MapSet.new())
 
+      # Piece is still the player's - recompute available_moves against the new
+      # board state so that stale (possibly-now-illegal) moves don't linger.
       true ->
-        socket
+        moves = fetch_moves(socket, square)
+        assign(socket, :available_moves, MapSet.new(moves))
     end
   end
+
+  defp selection_still_owned?(state, square, role) when role in [:white, :black] do
+    case piece_for(state, square) do
+      %{color: ^role} -> true
+      _ -> false
+    end
+  end
+
+  defp selection_still_owned?(_state, _square, _role), do: false
 
   defp piece_for(nil, _square), do: nil
 
@@ -1766,6 +1784,13 @@ defmodule LiveChessWeb.GameLive do
   end
 
   defp has_robot_player?(_), do: false
+
+  defp authorized_robot_mover?(%{assigns: %{role: role, game: game}})
+       when role in [:white, :black] and is_map(game) do
+    has_robot_player?(game) and robot_turn?(game)
+  end
+
+  defp authorized_robot_mover?(_socket), do: false
 
   defp robot_turn?(%{turn: turn, players: players}) do
     player = Map.get(players, turn)

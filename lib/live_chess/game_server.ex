@@ -99,9 +99,13 @@ defmodule LiveChess.GameServer do
   def handle_call({:create, token}, _from, state) do
     color = first_available_color(state)
 
-    with {:ok, state} <- ensure_slot(state, token, color) do
-      state = broadcast(state)
-      {:reply, {:ok, payload(state, token, color)}, state}
+    case ensure_slot(state, token, color) do
+      {:ok, state} ->
+        state = broadcast(state)
+        {:reply, {:ok, payload(state, token, color)}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -202,6 +206,7 @@ defmodule LiveChess.GameServer do
   def handle_call({:move, token, from, to, promotion}, _from, state) do
     with {:player, color} <- player_role(state, token),
          :active <- state.status,
+         :ok <- validate_promotion(promotion),
          :ok <- validate_turn(state, color),
          {:ok, move_value} <- format_move(from, to),
          {:ok, game} <- ChessGame.play(state.game, move_value, promotion) do
@@ -215,11 +220,9 @@ defmodule LiveChess.GameServer do
       updated = broadcast(updated)
       {:reply, {:ok, payload(updated, token, color)}, updated}
     else
-      {:player, _} -> {:reply, {:error, :game_not_active}, state}
-      :waiting -> {:reply, {:error, :game_not_active}, state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
       :spectator -> {:reply, {:error, :not_authorized}, state}
-      {:spectator, _} -> {:reply, {:error, :not_authorized}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+      status when is_atom(status) -> {:reply, {:error, :game_not_active}, state}
     end
   end
 
@@ -378,6 +381,9 @@ defmodule LiveChess.GameServer do
       _ -> {:error, :not_your_turn}
     end
   end
+
+  defp validate_promotion(p) when p in ["r", "n", "b", "q"], do: :ok
+  defp validate_promotion(_), do: {:error, :invalid_promotion}
 
   defp current_turn(fen) do
     case String.split(fen, " ") do
