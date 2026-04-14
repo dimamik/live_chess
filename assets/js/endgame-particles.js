@@ -36,7 +36,11 @@ class ParticleSystem {
       }, 5000);
     } else {
       this.createTears();
-      // Tears never stop spawning
+      // Stop ALL tear animation after 5 seconds, same as celebration
+      setTimeout(() => {
+        this.canSpawnNew = false;
+        this.particles = [];
+      }, 5000);
     }
 
     this.animate();
